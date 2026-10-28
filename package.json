@@ -1,0 +1,52 @@
+{
+  "name": "lcci-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 9000",
+    "build": "next build",
+    "start": "next start -p 9000",
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "migrate": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/migrate.ts",
+    "migrate:status": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/migrate.ts --status",
+    "cron:print": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/cron.ts",
+    "seed:rbac": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/seed-rbac.ts",
+    "test:db": "vitest run --config vitest.integration.mts",
+    "db:create": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/create-databases.ts",
+    "seed:calendar": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/seed-calendar.ts",
+    "dev:member": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-member.ts",
+    "dev:staff": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-staff.ts",
+    "dev:totp": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-totp.ts",
+    "dev:queue": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-queue.ts"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "jose": "^6.2.13",
+    "kysely": "^0.28.18",
+    "lucide-react": "^1.61.0",
+    "mysql2": "^3.24.6",
+    "next": "16.4.3",
+    "nodemailer": "^10.2.1",
+    "pdf-lib": "^1.17.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "^0.0.1",
+    "tailwind-merge": "^3.7.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^22.20.5",
+    "@types/nodemailer": "^8.0.2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.3",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^5.0.5"
+  }
+}

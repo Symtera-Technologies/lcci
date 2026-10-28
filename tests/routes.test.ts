@@ -1,0 +1,229 @@
+import { describe, expect, it } from "vitest";
+import { readdir } from "node:fs/promises";
+import path from "node:path";
+import {
+  PROTECTED_PREFIXES,
+  ROUTE_POLICY,
+  isProtected,
+  requiresPolicy,
+  routePolicy,
+} from "@/server/auth/policy";
+
+/**
+ * The route inventory.
+ *
+ * This is the first test in the project, written before the routes it guards,
+ * and it is the only mechanical guarantee that nothing under `/admin` or
+ * `/membership/apply` is reachable without a check. Everything else in the
+ * authorisation design — the data-access layer, the actor parameter, the
+ * permission union — makes the *right* check easy to write. None of it makes a
+ * *missing* check noticeable.
+ *
+ * So: walk the filesystem for every route Next will serve, and assert that
+ * every protected one is named in `ROUTE_POLICY`. Adding an unprotected admin
+ * route then stops being something a reviewer has to spot and becomes
+ * something the suite refuses.
+ *
+ * It reads the filesystem rather than importing Next's internals deliberately:
+ * the filesystem *is* the router, and an inventory derived from the same thing
+ * Next derives its routes from cannot disagree with it.
+ */
+
+const APP_DIR = path.join(process.cwd(), "src", "app");
+
+const PAGE_FILES = new Set(["page.tsx", "page.ts", "page.jsx", "page.js"]);
+const ROUTE_FILES = new Set(["route.ts", "route.js"]);
+
+export interface DiscoveredRoute {
+  /** The URL path Next will serve. */
+  urlPath: string;
+  /** The file, relative to src/app, for a readable failure message. */
+  file: string;
+  kind: "page" | "route";
+}
+
+/**
+ * Translate a directory path under `src/app` into the URL it serves.
+ *
+ * Returns null for segments Next excludes from routing entirely.
+ */
+function segmentsToUrl(segments: string[]): string | null {
+  const kept: string[] = [];
+
+  for (const segment of segments) {
+    // A folder whose name starts with an underscore is private: Next does not
+    // route it at all.
+    if (segment.startsWith("_")) return null;
+
+    // `(group)` is a route group — organisational, contributes no URL segment.
+    if (segment.startsWith("(") && segment.endsWith(")")) continue;
+
+    // `@slot` is a parallel route; its pages render at the parent's URL.
+    if (segment.startsWith("@")) continue;
+
+    kept.push(segment);
+  }
+
+  return `/${kept.join("/")}`.replace(/\/{2,}/g, "/").replace(/(.)\/$/, "$1");
+}
+
+async function discoverRoutes(): Promise<DiscoveredRoute[]> {
+  const found: DiscoveredRoute[] = [];
+
+  async function walk(dir: string, segments: string[]): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        await walk(path.join(dir, entry.name), [...segments, entry.name]);
+        continue;
+      }
+
+      const isPage = PAGE_FILES.has(entry.name);
+      const isRoute = ROUTE_FILES.has(entry.name);
+      if (!isPage && !isRoute) continue;
+
+      const urlPath = segmentsToUrl(segments);
+      if (urlPath === null) continue;
+
+      found.push({
+        urlPath,
+        file: path.posix.join(...segments, entry.name),
+        kind: isPage ? "page" : "route",
+      });
+    }
+  }
+
+  await walk(APP_DIR, []);
+  return found.sort((a, b) => a.urlPath.localeCompare(b.urlPath));
+}
+
+describe("route inventory", () => {
+  it("finds the routes that already exist", async () => {
+    // A sanity check on the walker itself. If this ever returns nothing, every
+    // other assertion below passes vacuously and the guarantee is gone.
+    const routes = await discoverRoutes();
+    expect(routes.length).toBeGreaterThan(0);
+    expect(routes.map((r) => r.urlPath)).toContain("/");
+  });
+
+  it("names every protected route and every API route in ROUTE_POLICY", async () => {
+    const routes = await discoverRoutes();
+    const unlisted: string[] = [];
+
+    for (const route of routes) {
+      if (!requiresPolicy(route.urlPath)) continue;
+      const { policy } = routePolicy(route.urlPath);
+      if (!policy) unlisted.push(`${route.urlPath}  (src/app/${route.file})`);
+    }
+
+    expect(
+      unlisted,
+      "These routes need a declared policy and have no entry in " +
+        "src/server/auth/policy.ts. Add one — and remember the table is not " +
+        "the check itself: the route must also call requireStaff/requireMember.\n" +
+        unlisted.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("marks a policy entry as planned exactly while its route is missing", async () => {
+    const routes = await discoverRoutes();
+    const existing = new Set(routes.map((r) => r.urlPath));
+
+    const wrong: string[] = [];
+    for (const [pattern, policy] of Object.entries(ROUTE_POLICY)) {
+      const routeExists = existing.has(pattern);
+
+      if (!routeExists && !policy.planned) {
+        wrong.push(
+          `${pattern} has a policy but no route file, and is not marked planned. ` +
+            "Either the path is mistyped or the route was deleted.",
+        );
+      }
+      if (routeExists && policy.planned) {
+        wrong.push(
+          `${pattern} exists now — remove "planned: true" from its policy entry.`,
+        );
+      }
+    }
+
+    // This is what stops `planned` from rotting into a permanent exemption: a
+    // flag that only has to be removed when the route lands is a flag someone
+    // will be told to remove.
+    expect(wrong, wrong.join("\n")).toEqual([]);
+  });
+
+  it("gives every policy entry an audience and a permission list", () => {
+    for (const [pattern, policy] of Object.entries(ROUTE_POLICY)) {
+      expect(["staff", "member", "either"], pattern).toContain(policy.audience);
+      expect(Array.isArray(policy.permissions), pattern).toBe(true);
+    }
+  });
+
+  it("requires a note on any entry that opts out of authentication", () => {
+    // `public: true` under a protected prefix, or on an API route, is the one
+    // kind of entry where the reason has to be written down — otherwise the
+    // next reader cannot tell a deliberate exemption from a mistake.
+    for (const [pattern, policy] of Object.entries(ROUTE_POLICY)) {
+      if (!policy.public) continue;
+      expect(policy.note?.length ?? 0, `${pattern} is public with no note`).toBeGreaterThan(
+        20,
+      );
+    }
+  });
+});
+
+describe("isProtected", () => {
+  it("covers each declared prefix and its children", () => {
+    for (const prefix of PROTECTED_PREFIXES) {
+      expect(isProtected(prefix)).toBe(true);
+      expect(isProtected(`${prefix}/anything`)).toBe(true);
+      expect(isProtected(`${prefix}/deeply/nested/thing`)).toBe(true);
+    }
+  });
+
+  it("leaves the public site alone", () => {
+    for (const path of ["/", "/v2", "/news", "/about", "/membership"]) {
+      expect(isProtected(path), path).toBe(false);
+    }
+  });
+
+  it("is not fooled by a prefix that is only a string prefix", () => {
+    // `/administration` must not be treated as living under `/admin`, and
+    // `/membership` must not be treated as living under `/membership/apply`.
+    expect(isProtected("/administration")).toBe(false);
+    expect(isProtected("/adminx")).toBe(false);
+    expect(isProtected("/membership")).toBe(false);
+    expect(isProtected("/membership/benefits")).toBe(false);
+  });
+
+  it("normalises a trailing slash and doubled separators", () => {
+    // Without this, `/admin//users` and `/admin/users/` would slip past a
+    // prefix check that `/admin/users` fails — which is the whole attack.
+    expect(isProtected("/admin/")).toBe(true);
+    expect(isProtected("/admin//users")).toBe(true);
+    expect(isProtected("/admin/users/")).toBe(true);
+    expect(isProtected("//admin")).toBe(true);
+  });
+});
+
+describe("routePolicy", () => {
+  it("resolves a concrete path against a dynamic pattern", () => {
+    const { policy } = routePolicy("/api/cron/email-outbox");
+    expect(policy).not.toBeNull();
+    expect(policy?.public).toBe(true);
+  });
+
+  it("does not match a dynamic pattern with the wrong depth", () => {
+    expect(routePolicy("/api/cron").policy).toBeNull();
+    expect(routePolicy("/api/cron/a/b").policy).toBeNull();
+  });
+
+  it("reports an unlisted protected path as protected with no policy", () => {
+    // Deny by default. A caller that finds `protectedPath: true` and
+    // `policy: null` must refuse, not wave it through.
+    const decision = routePolicy("/admin/not-in-the-table");
+    expect(decision.protectedPath).toBe(true);
+    expect(decision.policy).toBeNull();
+  });
+});

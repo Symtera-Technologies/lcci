@@ -1,0 +1,25 @@
+{
+  // TypeScript configuration for the command-line scripts in `scripts/`.
+  //
+  // Identical to the application's, with one addition: `server-only` resolves
+  // to a stub.
+  //
+  // The real `server-only` package exports a module whose only job is to throw
+  // when a bundler pulls it into a client bundle. That guard is exactly right
+  // for the application — `src/db/pool.ts` holds database credentials and must
+  // never reach a browser — and meaningless for a CLI, which has no client
+  // bundle to be pulled into and is a server context by definition. Without
+  // this, `npm run migrate` dies on its first import of the pool.
+  //
+  // Scoped to a separate file rather than added to tsconfig.json so the
+  // guard stays live for `next build`, which is the only place it does any
+  // work. The same stub serves Vitest, for the same reason — see
+  // vitest.config.mts.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"],
+      "server-only": ["./tests/stubs/server-only.ts"]
+    }
+  }
+}

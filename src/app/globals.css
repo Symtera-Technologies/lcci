@@ -1,0 +1,373 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   LCCI design tokens — "Ink & Saffron"
+   --------------------------------------------------------------------------
+   Ink      deep indigo-navy. Institutional authority; carries all body text.
+   Saffron  warm gold. Lahore's Mughal gilding. Calls to action and figures.
+   Clay     terracotta. Lahore brickwork. Editorial tags and advocacy accents.
+   Stone    warm neutrals, never cold slate, so the chrome reads human.
+
+   Every pairing used for text in components below meets WCAG 2.2 AA.
+   ========================================================================== */
+
+@theme {
+  /* --- Ink ------------------------------------------------------------- */
+  --color-ink-50: #f2f5f9;
+  --color-ink-100: #e3e9f1;
+  --color-ink-200: #c7d2e3;
+  --color-ink-300: #9fb1cb;
+  --color-ink-400: #6e87ac;
+  --color-ink-500: #4c6690;
+  --color-ink-600: #395073;
+  --color-ink-700: #2c3f5c;
+  --color-ink-800: #1c2a40;
+  --color-ink-900: #122033;
+  --color-ink-950: #0a1420;
+
+  /* --- Brand green ------------------------------------------------------
+     Sampled from the official crest: #174c30, which sits at 800 here.
+     The mid and light steps are deliberately more saturated than the crest
+     (S~60% against its own S~53%) — stepped down in chroma they read grey-sage
+     on screen. The crest colour is only 1.86:1 against ink-950, so on dark
+     panels the lighter steps carry text and the mid steps carry fills. */
+  --color-brand-50: #ecfaf2;
+  --color-brand-100: #cef2df;
+  --color-brand-200: #9fe7c2;
+  --color-brand-300: #63d79e;
+  --color-brand-400: #2cbd7d;
+  --color-brand-500: #14a065;
+  --color-brand-600: #0f7f51;
+  --color-brand-700: #136441;
+  --color-brand-800: #174c30;
+  --color-brand-900: #133e28;
+  --color-brand-950: #0a2417;
+
+  /* --- Clay ------------------------------------------------------------ */
+  --color-clay-50: #fbf4f1;
+  --color-clay-100: #f6e6e0;
+  --color-clay-200: #edcdc1;
+  --color-clay-300: #e0a898;
+  --color-clay-400: #d07d67;
+  --color-clay-500: #c0553c;
+  --color-clay-600: #a84430;
+  --color-clay-700: #8b3729;
+  --color-clay-800: #733027;
+  --color-clay-900: #612c25;
+
+  /* --- Stone (warm neutral) -------------------------------------------- */
+  --color-stone-50: #faf9f7;
+  --color-stone-100: #f3f1ed;
+  --color-stone-200: #e7e3dc;
+  --color-stone-300: #d4cec3;
+  --color-stone-400: #ada496;
+  --color-stone-500: #8b8173;
+  --color-stone-600: #6f665a;
+  --color-stone-700: #5a5248;
+  --color-stone-800: #443e37;
+  --color-stone-900: #2e2a25;
+  --color-stone-950: #1a1713;
+
+  /* --- Status ---------------------------------------------------------- */
+  --color-success-50: #eef7f0;
+  /* The light step exists because the 500 is only 3.68:1 on ink-950 and so
+     cannot carry text on the dark panels — the semantic scales originally had
+     no step that could, which is a real gap rather than a missing nicety.
+     Held at the family's own hue (145°) rather than nudged away from the brand
+     green: a coherent scale is worth more than pre-empting a mix-up between a
+     header link and an inline figure, which context already separates. */
+  --color-success-300: #70cd96;
+  --color-success-500: #2f7d4f;
+  --color-success-700: #1f5b39;
+  --color-urgent-50: #fdf1f0;
+  --color-urgent-500: #c0392b;
+  --color-urgent-700: #8f291f;
+
+  /* --- Typography ------------------------------------------------------ */
+  --font-display: var(--font-newsreader), Georgia, "Times New Roman", serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-urdu: var(--font-nastaliq), var(--font-inter), sans-serif;
+
+  --text-display-xl: 3.75rem;
+  --text-display-xl--line-height: 1.04;
+  --text-display-xl--letter-spacing: -0.022em;
+  --text-display-lg: 2.75rem;
+  --text-display-lg--line-height: 1.1;
+  --text-display-lg--letter-spacing: -0.018em;
+  --text-display-md: 2rem;
+  --text-display-md--line-height: 1.16;
+  --text-display-md--letter-spacing: -0.014em;
+  --text-display-sm: 1.5rem;
+  --text-display-sm--line-height: 1.24;
+  --text-display-sm--letter-spacing: -0.01em;
+
+  /* --- Elevation ------------------------------------------------------- */
+  --shadow-card: 0 1px 2px rgb(10 20 32 / 0.04), 0 4px 16px rgb(10 20 32 / 0.06);
+  --shadow-raised: 0 2px 4px rgb(10 20 32 / 0.06), 0 12px 32px rgb(10 20 32 / 0.1);
+
+  /* --- Variant 2 ---------------------------------------------------------
+     Depth, glass and motion for the /v2 homepage. Additive only: nothing
+     above changes, so the live homepage is untouched by any of this. */
+
+  /* Stacked elevation. Three shadows per step — a tight contact shadow, a
+     mid spread and a wide ambient one — because a single large blur reads as
+     fog rather than as height. */
+  --shadow-depth-1: 0 1px 2px rgb(10 20 32 / 0.05), 0 4px 10px rgb(10 20 32 / 0.05),
+    0 12px 28px rgb(10 20 32 / 0.05);
+  --shadow-depth-2: 0 2px 4px rgb(10 20 32 / 0.06), 0 10px 24px rgb(10 20 32 / 0.08),
+    0 28px 60px rgb(10 20 32 / 0.1);
+  --shadow-depth-3: 0 4px 8px rgb(10 20 32 / 0.08), 0 20px 44px rgb(10 20 32 / 0.12),
+    0 48px 100px rgb(10 20 32 / 0.16);
+  --shadow-glow-brand: 0 18px 50px -12px rgb(20 160 101 / 0.45);
+
+  /* Distinct easings, so motion is not one curve reused everywhere. */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --animate-marquee: v2-marquee 48s linear infinite;
+  --animate-drift: v2-drift 24s ease-in-out infinite;
+
+  /* The hero mesh. Four separate paths rather than one keyframe at four
+     speeds: identical shapes at different tempos still read as a single
+     pulse, however the timings are staggered. Durations are coprime-ish so
+     the set does not visibly resynchronise. */
+  --animate-aurora-a: v2-aurora-a 17s ease-in-out infinite;
+  --animate-aurora-b: v2-aurora-b 23s ease-in-out infinite;
+  --animate-aurora-c: v2-aurora-c 19s ease-in-out infinite;
+  --animate-aurora-d: v2-aurora-d 29s ease-in-out infinite;
+  --animate-sheen: v2-sheen 14s ease-in-out infinite;
+
+  /* The arcade walking past. Linear, because an eased traverse reads as the
+     colonnade hesitating at each end rather than as continuous travel. The
+     near rank covers a bay in 14s and the far rank in 40s — with 10 bays
+     against 6, that works out to roughly 10px/s against 6px/s on a desktop
+     viewport, which is the speed difference that sells the depth. */
+  --animate-colonnade-near: v2-colonnade 14s linear infinite;
+  --animate-colonnade-far: v2-colonnade 40s linear infinite;
+}
+
+@keyframes v2-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@keyframes v2-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(2%, -3%, 0) scale(1.06); }
+}
+
+/**
+ * Hero mesh paths.
+ *
+ * `translate` and `scale` are driven as their own properties rather than
+ * through `transform`, so these compose with anything else on the element
+ * instead of overwriting it.
+ *
+ * Travel is a percentage of each blob's own box, and the blobs are 28–44rem
+ * across, so 10% is roughly 60–70px of real movement — enough to be seen
+ * under a 3xl blur, where the previous 2–3% simply was not. None of them
+ * returns to centre at the same point in its cycle.
+ */
+@keyframes v2-aurora-a {
+  0%, 100% { translate: 0 0; scale: 1; }
+  25% { translate: 12% 7%; scale: 1.18; }
+  50% { translate: 5% 14%; scale: 0.95; }
+  75% { translate: -8% 4%; scale: 1.1; }
+}
+
+@keyframes v2-aurora-b {
+  0%, 100% { translate: 0 0; scale: 1.05; }
+  33% { translate: -14% 9%; scale: 0.9; }
+  66% { translate: 7% -6%; scale: 1.22; }
+}
+
+@keyframes v2-aurora-c {
+  0%, 100% { translate: 0 0; scale: 0.98; }
+  40% { translate: 10% -12%; scale: 1.25; }
+  70% { translate: -9% -5%; scale: 1.02; }
+}
+
+@keyframes v2-aurora-d {
+  0%, 100% { translate: 0 0; scale: 1.1; }
+  50% { translate: 16% 10%; scale: 0.88; }
+}
+
+/**
+ * A single pass of light across the stage.
+ *
+ * This is what makes the backdrop legibly *moving* rather than merely alive:
+ * the washes breathe in place, but nothing crosses the frame. It fades in and
+ * out at the edges so it never appears as a hard band entering the viewport.
+ */
+@keyframes v2-sheen {
+  0% { translate: -150% 0; opacity: 0; }
+  12% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { translate: 150% 0; opacity: 0; }
+}
+
+/**
+ * The colonnade sliding by.
+ *
+ * 100 is one bay in the arcade's own user units, and the rank draws one bay
+ * more than it shows — so at the end of the cycle the arches have advanced
+ * exactly one bay and the frame is pixel-identical to its start. That is what
+ * makes the loop invisible; any other distance would visibly jump.
+ *
+ * Driven on `transform`, and applied to a group *inside* the SVG rather than
+ * to the rank wrapper, because the wrapper's scroll parallax already owns
+ * `translate` — the two would otherwise fight over one property.
+ */
+@keyframes v2-colonnade {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100px); }
+}
+
+/**
+ * Both of these drive the standalone `translate` property rather than
+ * `transform`, and that is load-bearing.
+ *
+ * A scroll-driven animation runs with `fill-mode: both`, so once the element
+ * is past its animation range it clamps and holds the final keyframe for ever.
+ * Written as `transform`, that held value would be `transform: none` — which
+ * silently overrides `v2-tilt` and kills the pointer tilt on every card that
+ * also reveals, in exactly the browsers that support scroll timelines.
+ *
+ * `translate` is a separate property that composes with `transform` (it is
+ * applied first), so a card can reveal and tilt at once with no conflict.
+ */
+@keyframes v2-rise {
+  from { opacity: 0; translate: 0 14px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+@keyframes v2-parallax {
+  from { translate: 0 var(--v2-parallax-from, 6%); }
+  to { translate: 0 var(--v2-parallax-to, -6%); }
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-stone-50);
+    color: var(--color-ink-900);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv05" 1, "ss01" 1;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    color: var(--color-ink-950);
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  /* WCAG 2.2 AA: focus must be visible and never clipped. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* Urdu mirror: RTL plumbing is in place so /ur is a content job, not a rebuild. */
+  [dir="rtl"] body {
+    font-family: var(--font-urdu);
+    line-height: 2;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@utility container-page {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 80rem;
+  padding-inline: 1rem;
+  @media (width >= 48rem) { padding-inline: 2rem; }
+  @media (width >= 80rem) { padding-inline: 2.5rem; }
+}
+
+/* ==========================================================================
+   Variant 2 utilities
+   ========================================================================== */
+
+/**
+ * Scroll-driven reveal.
+ *
+ * Deliberately an enhancement rather than a requirement: the element is fully
+ * visible with no CSS applied, and the animation only ever runs where
+ * `animation-timeline` is supported. Nothing is invisible-by-default, so there
+ * is no no-JS or crawler hole to patch — and no IntersectionObserver, no
+ * animation library and no main-thread work, because scroll-driven animations
+ * run on the compositor.
+ */
+@utility v2-reveal {
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      animation: v2-rise linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 30%;
+    }
+  }
+}
+
+/** Parallax for decorative layers only — never text, never controls. */
+@utility v2-parallax {
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      animation: v2-parallax linear both;
+      animation-timeline: view();
+      animation-range: cover;
+      will-change: transform;
+    }
+  }
+}
+
+/** Frosted panel. Pairs with a dark, saturated backdrop or it reads as grey. */
+/**
+ * Frosted panel. Pairs with a dark, saturated backdrop or it reads as grey.
+ *
+ * Only the standard property is written here on purpose. Hand-authoring
+ * `-webkit-backdrop-filter` alongside it made Lightning CSS treat the prefixed
+ * declaration as the canonical one and drop the standard property entirely,
+ * so the blur silently stopped applying. Lightning CSS already adds whatever
+ * prefixes the configured browser targets need.
+ */
+@utility v2-glass {
+  background-color: rgb(255 255 255 / 0.07);
+  border: 1px solid rgb(255 255 255 / 0.14);
+  backdrop-filter: blur(16px) saturate(140%);
+}
+
+/**
+ * The tilt surface. The angles arrive as custom properties set by pointer
+ * handlers; with no pointer they are 0deg, so the card sits flat and the
+ * server-rendered markup needs no JS to look right.
+ */
+@utility v2-tilt {
+  transform: perspective(var(--v2-perspective, 900px))
+    rotateX(var(--v2-rx, 0deg))
+    rotateY(var(--v2-ry, 0deg))
+    translate3d(0, var(--v2-lift, 0px), 0);
+  transform-style: preserve-3d;
+}

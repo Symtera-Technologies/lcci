@@ -24,6 +24,43 @@ const PAYLOADS: Record<TemplateName, unknown> = {
       "Supply a bank account-maintenance certificate issued within the last three months.",
     ],
   },
+  "application-approved": {
+    reference: "LCCI-APP-2026-00001",
+    firmName: "Shalimar Textiles",
+    membershipNo: "LCCI-000142",
+    membershipClass: "Corporate",
+    validUntil: "31 March 2027",
+    note: null,
+  },
+  "application-received": {
+    reference: "LCCI-APP-2026-00001",
+    firmName: "Shalimar Textiles",
+    membershipClass: "Corporate",
+    processingTier: "Urgent",
+    dueDate: "20 November 2026",
+    fees: [
+      { label: "Membership fee", amount: "Rs 15,100" },
+      {
+        label: "International Trade Development surcharge",
+        amount: "USD 750",
+      },
+    ],
+  },
+  "fee-receipted": {
+    reference: "LCCI-APP-2026-00001",
+    firmName: "Shalimar Textiles",
+    receiptNo: "LCCI-RCPT-2026-00017",
+    amount: "Rs 15,100",
+    receivedOn: "28 October 2026",
+    instrumentNo: "000412",
+  },
+  "application-not-approved": {
+    reference: "LCCI-APP-2026-00001",
+    firmName: "Shalimar Textiles",
+    reason:
+      "The partnership deed supplied is on plain paper. The Chamber requires it on Rs 1000 stamp paper.",
+    feeReceipted: true,
+  },
 };
 
 describe("email templates", () => {

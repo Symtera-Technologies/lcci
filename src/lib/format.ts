@@ -66,3 +66,32 @@ export function dateParts(iso: string): { day: string; month: string } {
     month: new Intl.DateTimeFormat("en-GB", { month: "short", timeZone: TZ }).format(d),
   };
 }
+
+/**
+ * A fee, as the Chamber writes it.
+ *
+ * `DECIMAL(14,2)` arrives from mysql2 as a string and is kept as one all the
+ * way here: the six published fees are exact amounts an applicant draws a pay
+ * order for, and routing them through a float to format them is how
+ * `10650.00` becomes `10649.999999999998` in somebody's email.
+ *
+ * So the grouping is done on the digits. Whole amounts lose their `.00` —
+ * every published fee is a whole number of rupees and "Rs 10,650.00" reads
+ * like a bank statement rather than a fee — and anything with paisa keeps
+ * them, because dropping them would understate what is owed.
+ *
+ * `Rs` for rupees, the ISO code for everything else. The USD 750 surcharge is
+ * quoted in the form as a dollar equivalent and is better left looking foreign
+ * than dressed up with a symbol the applicant's bank will not use.
+ */
+export function formatMoney(amount: string, currency: string): string {
+  const [whole = "0", fraction = ""] = amount.trim().split(".");
+  const negative = whole.startsWith("-");
+  const digits = negative ? whole.slice(1) : whole;
+
+  const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const paisa = /^0*$/.test(fraction) ? "" : `.${fraction.padEnd(2, "0").slice(0, 2)}`;
+  const unit = currency.toUpperCase() === "PKR" ? "Rs" : currency.toUpperCase();
+
+  return `${unit} ${negative ? "-" : ""}${grouped}${paisa}`;
+}

@@ -19,7 +19,11 @@
     "dev:member": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-member.ts",
     "dev:staff": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-staff.ts",
     "dev:totp": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-totp.ts",
-    "dev:queue": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-queue.ts"
+    "dev:queue": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-queue.ts",
+    "dev:totp-secret": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-totp-from-secret.ts",
+    "dev:peek": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-peek.ts",
+    "dev:unreceipt": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-unreceipt.ts",
+    "dev:job": "tsx --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/dev-job.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",

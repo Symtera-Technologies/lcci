@@ -151,16 +151,103 @@ export async function inParallel<T>(
 export async function createUser(
   email: string,
   userType: "staff" | "portal" = "staff",
+  fullName = "Integration Test",
 ): Promise<number> {
   const result = await getDb()
     .insertInto("users")
     .values({
       user_type: userType,
       email,
-      full_name: "Integration Test",
+      full_name: fullName,
       status: "active",
     })
     .executeTakeFirst();
 
   return Number(result.insertId ?? 0);
+}
+
+/* -------------------------------------------------------------------------- */
+/* The working-day calendar                                                   */
+/* -------------------------------------------------------------------------- */
+
+function nextDay(date: string): string {
+  const next = new Date(`${date}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+}
+
+async function writeCalendar(
+  rows: readonly { cal_date: string; is_working_day: number }[],
+  source: string,
+): Promise<void> {
+  const db = getDb();
+  await sql`DELETE FROM working_day_calendar`.execute(db);
+
+  for (let at = 0; at < rows.length; at += 200) {
+    await db
+      .insertInto("working_day_calendar")
+      .values(
+        rows.slice(at, at + 200).map((row) => ({
+          ...row,
+          label_en: null,
+          source,
+          notified_on: null,
+          updated_at: new Date(),
+        })),
+      )
+      .execute();
+  }
+}
+
+/**
+ * Put the calendar back the way `0010_seed_calendar.sql` left it.
+ *
+ * `resetTables` does not touch `working_day_calendar`, because it is seeded
+ * reference data the SLA arithmetic reads — but a test that needs a calendar
+ * of its own has to replace the whole table to get one, and until this existed
+ * nothing put it back. The calendar a suite found therefore depended on which
+ * suites had run before it, which is the kind of coupling that surfaces as one
+ * unrelated test failing on a Tuesday.
+ *
+ * Monday to Friday, provisional, no label, contiguous from 2026 to 2029: the
+ * seed exactly, and also what `extendCalendar` writes, so a rewritten row is
+ * indistinguishable from an untouched one. Contiguity matters on its own —
+ * `extendCalendar` fills from the first gap, and `nthWorkingDayAfter` counts
+ * rows, so a hole silently shortens every deadline that crosses it.
+ */
+export async function reseedCalendar(): Promise<void> {
+  const rows: { cal_date: string; is_working_day: number }[] = [];
+  for (let date = "2026-01-01"; date <= "2029-12-31"; date = nextDay(date)) {
+    const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+    rows.push({
+      cal_date: date,
+      is_working_day: weekday >= 1 && weekday <= 5 ? 1 : 0,
+    });
+  }
+
+  await writeCalendar(
+    rows,
+    "Monday to Friday assumed; working week unconfirmed",
+  );
+}
+
+/**
+ * A calendar where every day counts.
+ *
+ * For suites whose subject is not the holiday arithmetic. With no weekends and
+ * no closures, "the fifteenth working day" is a date the test can compute in
+ * one line, so a wrong answer is a bug in the code rather than in the fixture.
+ * Pair it with `reseedCalendar` in `afterAll`.
+ */
+export async function seedAllWorkingDays(
+  fromDaysAgo = 60,
+  days = 500,
+): Promise<void> {
+  const start = Date.now() - fromDaysAgo * 86_400_000;
+  const rows = Array.from({ length: days }, (_, index) => ({
+    cal_date: new Date(start + index * 86_400_000).toISOString().slice(0, 10),
+    is_working_day: 1,
+  }));
+
+  await writeCalendar(rows, "integration-test: every day a working day");
 }

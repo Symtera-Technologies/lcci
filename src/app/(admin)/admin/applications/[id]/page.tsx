@@ -2,7 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireStaffPage } from "@/server/auth/dal";
-import { loadForReview, type ReviewDocument, type ReviewView } from "@/membership/review";
+import {
+  loadForReview,
+  type ReviewDocument,
+  type ReviewView,
+} from "@/membership/review";
 import { daysFromDue } from "@/membership/queue";
 import { TIER_WORKING_DAYS } from "@/membership/workflow";
 import { StatusPill, stateLabel } from "@/components/admin/status-pill";
@@ -60,7 +64,8 @@ export default async function ApplicationReviewPage({
     review.supersededDocuments.find((doc) => doc.id === selectedId) ??
     null;
 
-  const mine = review.assignedToId !== null && review.assignedToId === actor.userId;
+  const mine =
+    review.assignedToId !== null && review.assignedToId === actor.userId;
   const days = daysFromDue(review.dueDate);
 
   return (
@@ -93,8 +98,9 @@ export default async function ApplicationReviewPage({
             {review.processingTier && (
               <>
                 {" · "}
-                <span className="capitalize">{review.processingTier}</span>,{" "}
-                {TIER_WORKING_DAYS[review.processingTier]} working days
+                <span className="capitalize">
+                  {review.processingTier}
+                </span>, {TIER_WORKING_DAYS[review.processingTier]} working days
               </>
             )}
             {review.companyStatusLabel && <> · {review.companyStatusLabel}</>}
@@ -142,12 +148,35 @@ export default async function ApplicationReviewPage({
           {/* The working surface. Linked rather than embedded, because this
               screen is read by anyone with `application.read` — a cashier
               included — and the checklist is the verifier's own. */}
-          <p className="mt-4">
+          <p className="mt-4 flex flex-wrap gap-3">
+            {/* Ungated, like the route it leads to: an approver has to read
+                the signed checklist before granting membership, and a verifier
+                who can read but not decide is a legitimate state during
+                handover. */}
             <Link
               href={`/admin/applications/${review.id}/checklist`}
               className="inline-flex h-10 items-center rounded-lg border border-stone-300 bg-white px-4 text-sm font-medium text-ink-800 hover:border-ink-400"
             >
               Verification checklist
+            </Link>
+            {actor.permissions.has("payment.read") && (
+              <Link
+                href={`/admin/applications/${review.id}/payment`}
+                className="inline-flex h-10 items-center rounded-lg border border-stone-300 bg-white px-4 text-sm font-medium text-ink-800 hover:border-ink-400"
+              >
+                Fee and pay order
+              </Link>
+            )}
+            {/* Ungated for the same reason the checklist is: the page states
+                which controls were performed and by whom, which is what a
+                verifier handing over, or a cashier wondering why a grant is
+                stuck, needs to be able to read. Deciding is guarded by the
+                actions. */}
+            <Link
+              href={`/admin/applications/${review.id}/approval`}
+              className="inline-flex h-10 items-center rounded-lg border border-stone-300 bg-white px-4 text-sm font-medium text-ink-800 hover:border-ink-400"
+            >
+              Approval
             </Link>
           </p>
 
@@ -305,7 +334,9 @@ function Documents({
               applicationId={review.id}
               selected={doc.id === selectedId}
               subjectName={
-                doc.subjectId === null ? null : directorName.get(doc.subjectId) ?? null
+                doc.subjectId === null
+                  ? null
+                  : (directorName.get(doc.subjectId) ?? null)
               }
             />
           ))}
@@ -330,7 +361,7 @@ function Documents({
                 subjectName={
                   doc.subjectId === null
                     ? null
-                    : directorName.get(doc.subjectId) ?? null
+                    : (directorName.get(doc.subjectId) ?? null)
                 }
                 superseded
               />
@@ -377,7 +408,9 @@ function DocumentRow({
             {doc.issuedOn && <> · issued {doc.issuedOn}</>}
           </p>
           {doc.reviewNote && (
-            <p className="mt-1 text-[0.8125rem] text-ink-700">{doc.reviewNote}</p>
+            <p className="mt-1 text-[0.8125rem] text-ink-700">
+              {doc.reviewNote}
+            </p>
           )}
         </div>
 
@@ -504,12 +537,18 @@ function Particulars({ review }: { review: ReviewView }) {
         <Row label="Postal address" value={p.postalAddress} />
         <Row
           label="Premises"
-          value={p.premisesTenure ? <span className="capitalize">{p.premisesTenure}</span> : null}
+          value={
+            p.premisesTenure ? (
+              <span className="capitalize">{p.premisesTenure}</span>
+            ) : null
+          }
         />
         <Row label="Email" value={p.email} />
         <Row
           label="Office phone"
-          value={[p.officePhone1, p.officePhone2].filter(Boolean).join(" / ") || null}
+          value={
+            [p.officePhone1, p.officePhone2].filter(Boolean).join(" / ") || null
+          }
         />
         <Row label="Fax" value={p.fax} />
         <Row
@@ -535,12 +574,18 @@ function Particulars({ review }: { review: ReviewView }) {
         />
         <Row
           label="Business type"
-          value={review.businessTypes.length > 0 ? review.businessTypes.join(", ") : null}
+          value={
+            review.businessTypes.length > 0
+              ? review.businessTypes.join(", ")
+              : null
+          }
         />
         <Row
           label="Sector"
           value={
-            [p.businessSector, p.businessSubSector].filter(Boolean).join(" — ") || null
+            [p.businessSector, p.businessSubSector]
+              .filter(Boolean)
+              .join(" — ") || null
           }
         />
         <Row label="Main commodity" value={p.mainCommodity} />
@@ -618,7 +663,8 @@ function Endorsements({ review }: { review: ReviewView }) {
               </p>
               <p className="mt-0.5 text-[0.8125rem] text-stone-600">
                 {[
-                  endorsement.membershipNo && `Member ${endorsement.membershipNo}`,
+                  endorsement.membershipNo &&
+                    `Member ${endorsement.membershipNo}`,
                   endorsement.representativeName,
                   endorsement.mobile,
                   `endorsement ${endorsement.state}`,
@@ -653,12 +699,15 @@ function History({ review }: { review: ReviewView }) {
                 <span className="text-stone-600"> · {entry.code}</span>
               </p>
               <p className="mt-0.5 text-[0.8125rem] text-stone-600">
-                {entry.occurredAt.toISOString().replace("T", " ").slice(0, 16)} UTC
+                {entry.occurredAt.toISOString().replace("T", " ").slice(0, 16)}{" "}
+                UTC
                 {entry.actorName && ` · ${entry.actorName}`}
                 {entry.actorRoleCode && ` (${entry.actorRoleCode})`}
               </p>
               {entry.reason && (
-                <p className="mt-1 text-[0.8125rem] text-ink-700">{entry.reason}</p>
+                <p className="mt-1 text-[0.8125rem] text-ink-700">
+                  {entry.reason}
+                </p>
               )}
             </li>
           ))}

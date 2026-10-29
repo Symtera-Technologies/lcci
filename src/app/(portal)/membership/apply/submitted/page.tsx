@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CheckCircle2 } from "lucide-react";
 import { getDb } from "@/db/client";
-import { requireMember } from "@/server/auth/dal";
+import { requireMemberPage } from "@/server/auth/dal";
 import { TIER_LABELS } from "@/membership/fees";
 import type { ProcessingTier } from "@/db/schema";
 
@@ -27,7 +27,7 @@ export default async function SubmittedPage({
 }: {
   searchParams: Promise<{ ref?: string }>;
 }) {
-  const actor = await requireMember();
+  const actor = await requireMemberPage("/membership/apply/submitted");
   const { ref } = await searchParams;
 
   const db = getDb();

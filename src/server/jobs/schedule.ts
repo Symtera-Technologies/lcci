@@ -71,6 +71,21 @@ export const JOB_SCHEDULE = {
   },
 
   /**
+   * Every fifteen minutes during the working day, and not at all overnight.
+   *
+   * It only has work when somebody has just edited the calendar, and the
+   * person who edited it is the one waiting to see the deadlines follow. A
+   * nightly tick would mean a secretary entering an Eid notification at ten in
+   * the morning watches the breach report disagree with the applicants' inboxes
+   * until the next day.
+   */
+  "sla-recompute": {
+    schedule: "*/15 6-20 * * *",
+    description:
+      "Recompute promised dates flagged by a working-day calendar change.",
+  },
+
+  /**
    * Hourly. This is the monitoring on a host that has none, so its cadence is
    * "how late is it acceptable to learn that mail stopped working" — and the
    * answer for a system that emails sign-in codes is not "tomorrow".

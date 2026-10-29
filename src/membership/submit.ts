@@ -12,6 +12,7 @@ import { ConcurrencyError, ForbiddenError, type ActorContext } from "@/server/ac
 import { openField } from "@/membership/sensitive";
 import { writeAudit } from "@/server/audit";
 import { moveState, recordTransition } from "@/membership/applications";
+import { notifySubmitted } from "@/membership/notify";
 import { requiresItdSurcharge } from "@/membership/fees";
 import { startSlaClock } from "@/membership/sla";
 import { allocateNumber } from "@/membership/numbering";
@@ -492,10 +493,19 @@ export async function gatherFacts(
     // Pay orders hang off the payment, not the application: one application
     // can owe two fees by two separate instruments, and the bank-match
     // control is performed per instrument.
-    sql<{ bank_match_verdict: string | null }>`
-      SELECT o.bank_match_verdict
-        FROM pay_orders o
-        JOIN payments p ON p.id = o.payment_id
+    //
+    // A LEFT JOIN and not an inner one, because the question the guards ask is
+    // "has every instrument that was taken in been compared", and an inner
+    // join cannot see a receipted payment whose pay-order row is missing — the
+    // one case that most needs catching.
+    sql<{
+      state: string;
+      method: string | null;
+      bank_match_verdict: string | null;
+    }>`
+      SELECT p.state, p.method, o.bank_match_verdict
+        FROM payments p
+        LEFT JOIN pay_orders o ON o.payment_id = p.id
        WHERE p.application_id = ${applicationId}
     `.execute(db),
     // The most recent *completed* round, which is the one the guards ask
@@ -522,6 +532,15 @@ export async function gatherFacts(
   const allPaymentsReceipted =
     payments.length > 0 && payments.every((row) => settled.has(row.state));
 
+  // An instrument was taken in: a pay order or a cheque, receipted. Cash and
+  // an online payment have no drawee bank, so the control the form builds in
+  // cannot be performed on them and is not pretended to be.
+  const instruments = payOrders.rows.filter(
+    (row) =>
+      row.state === "receipted" &&
+      (row.method === "pay_order" || row.method === "cheque"),
+  );
+
   return {
     state: application.state as ApplicationState,
     formComplete: completeness.formComplete,
@@ -538,11 +557,18 @@ export async function gatherFacts(
     checklistCompleted: checklist !== undefined,
     checklistClear: checklist?.outcome === "clear",
     allPaymentsReceipted,
-    // One verdict per pay order, and every one of them has to be recorded:
+    // One verdict per instrument, and every one of them has to be recorded:
     // an application with two pay orders and one unexamined is not resolved.
-    bankMatchVerdictRecorded:
-      payOrders.rows.length > 0 &&
-      payOrders.rows.every((row) => row.bank_match_verdict !== null),
+    //
+    // Scoped to the payments that actually took an instrument in. A waived fee
+    // has no pay order and nothing to compare, so requiring a verdict for it
+    // would be a guard no action could ever satisfy.
+    bankMatchVerdictRecorded: instruments.every(
+      (row) => row.bank_match_verdict !== null,
+    ),
+    bankMatchMismatch: instruments.some(
+      (row) => row.bank_match_verdict === "mismatch",
+    ),
     endorsersInGoodStanding: endorsed.every(
       (row) => (row.standing_at_approval ?? row.standing_at_endorsement) === "active",
     ),
@@ -550,8 +576,10 @@ export async function gatherFacts(
     // Separation of duties is enforced three ways and this is the second: by
     // grant, then per-application here, then by an audited waiver.
     verifiedByUserId: checklist?.completed_by ?? null,
-    receiptedByUserId:
-      payments.find((row) => row.receipted_by !== null)?.receipted_by ?? null,
+    receiptedByUserIds: payments
+      .map((row) => row.receipted_by)
+      .filter((id): id is number => id !== null)
+      .map(Number),
     originalsReceived: false,
   };
 }
@@ -839,6 +867,18 @@ export async function submitApplication(
       },
       tx,
     );
+
+    // The confirmation §7.1 commits to, queued inside this transaction so a
+    // submission the applicant was never told about cannot exist. It is not
+    // called a receipt: the pay order is in an envelope and no cashier has
+    // seen it yet.
+    await notifySubmitted(tx, {
+      applicationId,
+      membershipClass,
+      processingTier,
+      dueDate: clock.dueDate,
+      fees: paymentRows,
+    });
 
     // Last, and the only step that can lose. Everything above is rolled back
     // if it does.

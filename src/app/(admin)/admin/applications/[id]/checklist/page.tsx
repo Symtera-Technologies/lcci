@@ -24,6 +24,7 @@ import { DocumentViewer, type ViewableDocument } from "@/components/admin/docume
 import { StateActionButton } from "@/components/admin/state-action-button";
 import {
   markVerifiedAction,
+  sendForApprovalAction,
   raiseDeficiencyAction,
   startVerificationAction,
   submitChecklistAction,
@@ -362,10 +363,33 @@ function NoOpenRound({
       )}
 
       {view.state === "VERIFIED" && (
-        <p className="mt-1 text-[0.9375rem] text-ink-700">
-          Verified. The fee and the pay-order match are the next step, and then
-          approval.
-        </p>
+        <>
+          <p className="mt-1 text-[0.9375rem] text-ink-700">
+            Verified. The file goes to the approver once the fee is settled and
+            the pay order has been compared with the account-maintenance
+            certificate.
+          </p>
+
+          {view.canSendForApproval ? (
+            <StateActionButton
+              applicationId={applicationId}
+              action={sendForApprovalAction}
+              label="Send for approval"
+              pendingLabel="Sending…"
+              note="The decision is then the approver's. You cannot take it yourself on a file you verified, and neither can the cashier who receipted the fee."
+            />
+          ) : (
+            <ul className="mt-3 space-y-1 text-[0.9375rem] text-urgent-700">
+              {view.sendBlockedBecause.length > 0 ? (
+                view.sendBlockedBecause.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))
+              ) : (
+                <li>Waiting on the cashier.</li>
+              )}
+            </ul>
+          )}
+        </>
       )}
     </section>
   );

@@ -294,6 +294,16 @@ export interface VerificationView {
   /** Whether this actor could open a round right now, and why not. */
   readonly canStart: boolean;
   readonly startBlockedBecause: readonly string[];
+  /**
+   * Whether a verified file can go to the approver, and what it is waiting on.
+   *
+   * Stated rather than discovered by pressing the button, because what it is
+   * usually waiting on is the cashier — and "the fee is not receipted yet" is
+   * something the officer should be able to read off the screen rather than
+   * learn from a refusal.
+   */
+  readonly canSendForApproval: boolean;
+  readonly sendBlockedBecause: readonly string[];
   /** Items still undecided in the open round. */
   readonly undecidedCodes: readonly string[];
 }
@@ -516,9 +526,15 @@ export async function loadVerification(
 
   const state = application.state as ApplicationState;
   const actorView = toActorView(actor);
+  const transitionFacts = { ...(await gatherFacts(db, applicationId)), state };
   const startDecision = canTransition(
-    { ...(await gatherFacts(db, applicationId)), state },
+    transitionFacts,
     state === "SUBMITTED" ? "begin_verification" : "mark_verified",
+    actorView,
+  );
+  const sendDecision = canTransition(
+    transitionFacts,
+    "send_for_approval",
     actorView,
   );
 
@@ -537,6 +553,13 @@ export async function loadVerification(
         ? startDecision.missingPermission
           ? ["You do not hold the permission to verify applications."]
           : startDecision.reasons
+        : [],
+    canSendForApproval: state === "VERIFIED" && sendDecision.allowed,
+    sendBlockedBecause:
+      state === "VERIFIED"
+        ? sendDecision.missingPermission
+          ? ["You do not hold the permission to send applications for approval."]
+          : sendDecision.reasons
         : [],
     undecidedCodes:
       current === null
@@ -1145,6 +1168,93 @@ export async function markVerified(
         entityId: applicationId,
         action: "application.verified",
         summary: "Documents and particulars verified; awaiting the fee and approval.",
+      },
+      tx,
+    );
+
+    return { ok: true } as const;
+  });
+}
+
+/**
+ * VERIFIED → PENDING_APPROVAL.
+ *
+ * The step that was missing, and the gap is worth naming: `mark_verified`
+ * leaves an application in `VERIFIED`, approval is only taken from
+ * `PENDING_APPROVAL`, and until this existed nothing in the admin could move an
+ * application between the two. The approval screen was reachable and correct
+ * and no file could ever arrive at it.
+ *
+ * It belongs to the verifying officer rather than the approver, which is why
+ * the permission is `application.verify`: handing a file on is the last act of
+ * verification, and letting approvers push files onto their own desks would
+ * make the queue a matter of who is keenest.
+ *
+ * Where the fee meets the file. The pay order arrived with the form, so
+ * receipting ran in parallel with the thirteen items; this is the one point the
+ * two have to agree, and the guards say so — every applicable fee receipted,
+ * a verdict recorded on every instrument, and no verdict of mismatch.
+ */
+export async function sendForApproval(
+  actor: ActorContext,
+  applicationId: number,
+): Promise<MarkVerifiedResult> {
+  requirePermission(actor, "application.verify");
+
+  return transaction(async (tx) => {
+    const application = await tx
+      .selectFrom("applications")
+      .select(["id", "state", "version"])
+      .where("id", "=", applicationId)
+      .executeTakeFirst();
+
+    if (!application) {
+      throw new ForbiddenError(null, "That application could not be found.");
+    }
+
+    const state = application.state as ApplicationState;
+    const facts = await gatherFacts(tx, applicationId);
+    const decision = canTransition(
+      { ...facts, state },
+      "send_for_approval",
+      toActorView(actor),
+    );
+
+    if (!decision.allowed) {
+      return {
+        ok: false,
+        reasons: decision.missingPermission
+          ? ["You do not hold the permission to send applications for approval."]
+          : decision.reasons.length > 0
+            ? decision.reasons
+            : [
+                "This application cannot be sent for approval from its current state.",
+              ],
+      } as const;
+    }
+
+    await moveState(tx, {
+      applicationId,
+      fromState: state,
+      fromVersion: Number(application.version),
+      toState: "PENDING_APPROVAL",
+    });
+
+    await recordTransition(tx, actor, {
+      applicationId,
+      fromState: state,
+      toState: "PENDING_APPROVAL",
+      transitionCode: "send_for_approval",
+    });
+
+    await writeAudit(
+      actor,
+      {
+        entityType: "application",
+        entityId: applicationId,
+        action: "application.sent_for_approval",
+        summary:
+          "Verified and the fee settled; sent to the approver for a decision.",
       },
       tx,
     );

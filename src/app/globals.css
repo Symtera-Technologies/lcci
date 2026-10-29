@@ -83,6 +83,35 @@
   --color-urgent-500: #c0392b;
   --color-urgent-700: #8f291f;
 
+  /* The steps the workflow needed.
+     ------------------------------
+     A membership application has seven internal states and five public ones,
+     and the backend renders each as a bordered, tinted pill carrying text. The
+     two status families had three and four steps, which is not enough to build
+     that from: a pill needs a tint light enough to sit under text, a text
+     colour dark enough to reach 4.5:1 on that tint, and a border at 3:1. Eight
+     classes were already in use across the admin and the wizard against steps
+     that did not exist — `text-success-800`, `border-urgent-600` and the rest
+     — and Tailwind emits nothing for an undefined token, so those borders and
+     labels were silently rendering at the inherited colour. Adding the steps
+     rather than retargeting every call site to a near-miss, because the
+     near-miss is what makes two different states look alike.
+     Hue is held constant within each family (145° for success, 7° for urgent).
+     The pairs that carry text were checked rather than assumed:
+     success-900 on success-100 is 10.2:1, urgent-800 on urgent-50 is 9.8:1,
+     urgent-600 as an input border on white is 6.7:1 — comfortably past the
+     3:1 a control boundary needs. */
+  --color-success-100: #d6ecde;
+  --color-success-600: #276c44;
+  --color-success-800: #194a2f;
+  --color-success-900: #133a25;
+  /* Tints only, for a panel edge; never asked to carry text or bound a
+     control, which is why they sit below 3:1 on white and that is correct. */
+  --color-urgent-200: #f8d4d0;
+  --color-urgent-300: #ecaaa3;
+  --color-urgent-600: #a73125;
+  --color-urgent-800: #73211a;
+
   /* --- Typography ------------------------------------------------------ */
   --font-display: var(--font-newsreader), Georgia, "Times New Roman", serif;
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;

@@ -29,6 +29,16 @@ import type { PermissionCode } from "@/server/permissions";
 export const PROTECTED_PREFIXES = [
   "/admin",
   "/membership/apply",
+  // Its own entry, because "/membership/apply" does not cover it. The prefix
+  // test is segment-aware on purpose — a plain `startsWith` would let
+  // `/membership/applyXYZ` inherit a protection it was never given — so
+  // `/membership/applications` is a different path, not a child of the
+  // wizard's. Left off this list it still had its own guard in the page, but
+  // it missed the two things only the proxy does: the nonce CSP, and
+  // `Cache-Control: private, no-store` with `Vary: Cookie`. A membership
+  // number and a fee receipt in a shared secretariat machine's back/forward
+  // cache is the one outcome that rule exists to prevent.
+  "/membership/applications",
   // Listed although it is public, so that it inherits the two things the
   // proxy only does for protected paths: `Cache-Control: private, no-store`
   // with `Vary: Cookie`, and the nonce CSP. A sign-in page is the last page
@@ -51,7 +61,10 @@ export const PROTECTED_PREFIXES = [
  * a declaration — `public: true` with a written reason, or an audience and a
  * permission list.
  */
-export const POLICY_REQUIRED_PREFIXES = [...PROTECTED_PREFIXES, "/api"] as const;
+export const POLICY_REQUIRED_PREFIXES = [
+  ...PROTECTED_PREFIXES,
+  "/api",
+] as const;
 
 export type Audience = "staff" | "member" | "either";
 
@@ -123,10 +136,16 @@ export const ROUTE_POLICY: Record<string, RoutePolicy> = {
     note: "The receipt page, reached by redirect after submission so a reload cannot re-post it. Scoped to the signed-in applicant, so the reference in the query string cannot reach someone else's application.",
   },
 
+  "/membership/applications": {
+    audience: "member",
+    permissions: [],
+    note: "The applicant's own list of applications, scoped to created_by in listApplications. The way into a terminal application: /membership/apply redirects only to one in flight, so without this an approved member had no page showing their own membership number.",
+  },
+
   "/membership/applications/[id]": {
     audience: "member",
     permissions: [],
-    note: "The applicant's own application: its stage, and the deficiency round when one is open. Scoped to created_by in the page's own query, so the id in the address bar reaches nobody else's application; a stranger's id is a 404, not a 403, so the route is not an existence oracle.",
+    note: "The applicant's own application: its stage, timeline, fee, membership and the deficiency round when one is open. Scoped to created_by in loadTracker's own query, so the id in the address bar reaches nobody else's application; a stranger's id is a 404, not a 403, so the route is not an existence oracle.",
   },
 
   /* --- Staff backend ---------------------------------------------------- */
@@ -180,6 +199,62 @@ export const ROUTE_POLICY: Record<string, RoutePolicy> = {
     // look.
     permissions: ["application.read"],
     note: "The thirteen-item verification checklist, the deficiency composer and the round history. All thirteen items are shown in the printed order even where they do not apply, because the form is an ISO-controlled document.",
+  },
+
+  "/admin/calendar": {
+    audience: "staff",
+    permissions: ["calendar.manage"],
+    note: "The working-day calendar, which is the input to every processing deadline in the system. Narrowly permissioned because a single edit here moves dates that have already been quoted to applicants — a holiday entered inside a running window makes the fortieth working day later than the date in somebody's inbox.",
+  },
+
+  "/admin/reports/sla": {
+    audience: "staff",
+    // `application.read`, the same grant the queue needs. The report is the
+    // queue's own data counted up; anyone who may read the applications may
+    // read how long they have taken, and a separate grant would mean the
+    // people doing the work are the last to see whether it is on time.
+    permissions: ["application.read"],
+    note: "Whether the chamber is keeping the processing promises it sold. Open files first and decided ones second, because a tier with a clean record and a dozen applications already past their date is not a tier being met.",
+  },
+
+  "/admin/audit": {
+    audience: "staff",
+    // `audit.read`, which only the super administrator holds. Not a wider
+    // grant: the log names every officer alongside every applicant, and the
+    // payloads carry the values before and after each decision. The narrative
+    // staff need while working their own files is on the application itself,
+    // from `application_state_transitions`, and needs no sight of this.
+    permissions: ["audit.read"],
+    note: "The hash-chained audit log, grouped by request because one approval writes four events. The screen verifies the rows it displays and reports the weekly sweep for the rest; it does not claim to have walked seven years of chain on a page load.",
+  },
+
+  "/admin/payments": {
+    audience: "staff",
+    permissions: ["payment.read"],
+    note: "The cashier's queue, ordered by the processing deadline rather than arrival. A separate queue from the officers' because receipting runs in parallel with verification: the pay order arrives with the form.",
+  },
+
+  "/admin/applications/[id]/approval": {
+    audience: "staff",
+    // `application.read`, like the review screen and the checklist, and
+    // deliberately not `application.approve`. The page is a statement of which
+    // controls were performed and by whom, and that is exactly what a verifier
+    // or a cashier should be able to read without being able to act on it —
+    // the decision itself is guarded by the actions, and by the workflow's own
+    // separation-of-duties guards inside the approval transaction.
+    permissions: ["application.read"],
+    note: "The approval block from page 2: every guard on the grant, satisfied or not, and the three decisions. Granting needs application.approve, refusing application.reject, and waiving a separation-of-duties guard role.manage; each is checked by its action.",
+  },
+
+  "/admin/applications/[id]/payment": {
+    audience: "staff",
+    // `payment.read` and deliberately not `application.read`. This screen is
+    // built around the two documents the money control compares, and a cashier
+    // holds the narrow `documents.read_financial` grant rather than
+    // `documents.read` — so putting receipting on the review screen would have
+    // meant handing them a page organised around every director's CNIC.
+    permissions: ["payment.read"],
+    note: "Cashier receipting and the pay-order / bank-certificate control. Receipting itself needs payment.receipt, checked by the action; this route only decides who may look.",
   },
 
   /* --- API -------------------------------------------------------------- */
@@ -262,7 +337,8 @@ export function isProtected(pathname: string): boolean {
  */
 function normalise(pathname: string): string {
   const collapsed = pathname.replace(/\/{2,}/g, "/");
-  if (collapsed.length > 1 && collapsed.endsWith("/")) return collapsed.slice(0, -1);
+  if (collapsed.length > 1 && collapsed.endsWith("/"))
+    return collapsed.slice(0, -1);
   return collapsed;
 }
 
@@ -271,8 +347,11 @@ function matchesPattern(path: string, pattern: string): boolean {
   const patternParts = pattern.split("/");
 
   // A catch-all consumes the remaining segments; a single param consumes one.
-  const catchAllIndex = patternParts.findIndex((part) => part.startsWith("[..."));
-  if (catchAllIndex === -1 && pathParts.length !== patternParts.length) return false;
+  const catchAllIndex = patternParts.findIndex((part) =>
+    part.startsWith("[..."),
+  );
+  if (catchAllIndex === -1 && pathParts.length !== patternParts.length)
+    return false;
   if (catchAllIndex !== -1 && pathParts.length < catchAllIndex) return false;
 
   for (let i = 0; i < patternParts.length; i += 1) {

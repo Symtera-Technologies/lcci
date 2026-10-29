@@ -52,10 +52,17 @@ export type AuthorizeOutcome =
  * The rules, in the order they are cheapest to evaluate:
  *
  * **Staff with the permission.** `documents.read` for the general case, and
- * `documents.read_financial` for `subject_kind = 'payment'` — the cashier must
- * compare the pay order against the bank account-maintenance certificate,
- * because that comparison *is* the anti-fraud control, but a cashier has no
- * business in a director's CNIC.
+ * `documents.read_financial` for the two documents the money control compares
+ * — the pay order and the bank account-maintenance certificate. That
+ * comparison *is* the anti-fraud control, so a cashier must be able to open
+ * both, while having no business in a director's CNIC.
+ *
+ * The narrow grant is keyed on the **document type**, not on `subject_kind`
+ * alone. It has to be: the pay order's subject kind is `payment`, but the
+ * certificate's is `company`, because the certificate is about the firm. A
+ * check on subject kind alone therefore let the cashier open the instrument
+ * and refused them the certificate it is supposed to be compared against —
+ * which is half a control, and the half that cannot catch anything.
  *
  * **The uploader.** An applicant can always read back what they uploaded.
  *
@@ -93,7 +100,12 @@ export async function authorizeDocument(
   // survives so the audit trail and the document manifest still resolve.
   if (!row || row.deleted_at !== null) return { ok: false, reason: "not-found" };
 
-  const permitted = isPermitted(actor, row.subject_kind, row.uploaded_by);
+  const permitted = isPermitted(
+    actor,
+    row.subject_kind,
+    row.document_type_code,
+    row.uploaded_by,
+  );
   if (!permitted) return { ok: false, reason: "forbidden" };
 
   // Only the registered media types are ever emitted, keyed on the format
@@ -146,19 +158,36 @@ export async function authorizeDocument(
   }
 }
 
+/**
+ * The documents the money control compares, by type code.
+ *
+ * A closed list and not a predicate over `subject_kind`, because the two sides
+ * of the comparison do not share a subject kind: a pay order is about the
+ * payment, a bank account-maintenance certificate is about the firm. Widening
+ * the narrow grant to every `company` document would hand the cashier the
+ * utility bill and the partnership deed as well, which is the opposite of why
+ * the narrow grant exists.
+ *
+ * Adding a type here widens what a cashier can read, so it is a decision to
+ * make deliberately rather than a list to grow by habit.
+ */
+const FINANCIAL_DOCUMENT_TYPES: ReadonlySet<string> = new Set([
+  "pay_order",
+  "bank_certificate",
+]);
+
 function isPermitted(
   actor: ActorContext,
   subjectKind: string,
+  documentTypeCode: string,
   uploadedBy: number | null,
 ): boolean {
   if (actor.userType === "staff") {
-    if (subjectKind === "payment") {
-      return (
-        actor.permissions.has("documents.read_financial") ||
-        actor.permissions.has("documents.read")
-      );
-    }
-    return actor.permissions.has("documents.read");
+    if (actor.permissions.has("documents.read")) return true;
+    return (
+      actor.permissions.has("documents.read_financial") &&
+      (subjectKind === "payment" || FINANCIAL_DOCUMENT_TYPES.has(documentTypeCode))
+    );
   }
 
   return uploadedBy !== null && uploadedBy === actor.userId;

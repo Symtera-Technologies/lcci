@@ -52,7 +52,9 @@ export async function nthWorkingDayAfter(
   workingDays: number,
 ): Promise<string> {
   if (!Number.isInteger(workingDays) || workingDays < 1) {
-    throw new Error(`workingDays must be a positive integer, got ${workingDays}`);
+    throw new Error(
+      `workingDays must be a positive integer, got ${workingDays}`,
+    );
   }
 
   const result = await sql<{ cal_date: string }>`
@@ -214,7 +216,11 @@ export async function resumeSlaClock(
     readonly pauseId: number | null;
     readonly at: Date;
   },
-): Promise<{ resumed: boolean; costWorkingDays: number; dueDate: string | null }> {
+): Promise<{
+  resumed: boolean;
+  costWorkingDays: number;
+  dueDate: string | null;
+}> {
   const clock = await tx
     .selectFrom("sla_clocks")
     .select(["id", "due_date", "paused_working_days"])
@@ -223,20 +229,21 @@ export async function resumeSlaClock(
 
   if (!clock) return { resumed: false, costWorkingDays: 0, dueDate: null };
 
-  const pause = params.pauseId === null
-    ? await tx
-        .selectFrom("sla_pauses")
-        .select(["id", "paused_at"])
-        .where("sla_clock_id", "=", clock.id)
-        .where("resumed_at", "is", null)
-        .orderBy("paused_at", "desc")
-        .executeTakeFirst()
-    : await tx
-        .selectFrom("sla_pauses")
-        .select(["id", "paused_at"])
-        .where("id", "=", params.pauseId)
-        .where("resumed_at", "is", null)
-        .executeTakeFirst();
+  const pause =
+    params.pauseId === null
+      ? await tx
+          .selectFrom("sla_pauses")
+          .select(["id", "paused_at"])
+          .where("sla_clock_id", "=", clock.id)
+          .where("resumed_at", "is", null)
+          .orderBy("paused_at", "desc")
+          .executeTakeFirst()
+      : await tx
+          .selectFrom("sla_pauses")
+          .select(["id", "paused_at"])
+          .where("id", "=", params.pauseId)
+          .where("resumed_at", "is", null)
+          .executeTakeFirst();
 
   const resumedClock = await tx
     .updateTable("sla_clocks")
@@ -249,7 +256,8 @@ export async function resumeSlaClock(
     return { resumed: false, costWorkingDays: 0, dueDate: clock.due_date };
   }
 
-  if (!pause) return { resumed: true, costWorkingDays: 0, dueDate: clock.due_date };
+  if (!pause)
+    return { resumed: true, costWorkingDays: 0, dueDate: clock.due_date };
 
   const from = new Date(pause.paused_at).toISOString().slice(0, 10);
   const to = params.at.toISOString().slice(0, 10);
@@ -289,4 +297,69 @@ export function isBreached(clock: {
   if (clock.outcome !== null) return clock.outcome === "breached";
   if (clock.state === "stopped") return false;
   return clock.due_date < new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Stop the clock, and record whether the promise was kept.
+ *
+ * Called from the transaction that reaches a final state — approval, rejection
+ * or closure — so the clock and the decision cannot disagree about whether a
+ * paid-for deadline was met.
+ *
+ * `outcome` is written here and not derived later, which is the whole point.
+ * The tier is a *paid* promise in working days: Rs 20,000 buys three. Deriving
+ * breach on read after the fact would mean a later calendar edit — a
+ * late-notified Eid holiday landing inside a window that has already closed —
+ * silently turning a breach into a success, or the reverse. Whether the
+ * chamber kept its word on the day it decided is a fact about that day, so it
+ * is frozen on that day.
+ *
+ * Nothing is returned for a clock that is already stopped: closure is
+ * idempotent, because an application can be rejected and reopened and rejected
+ * again, and the first outcome is the one that measured the original promise.
+ */
+export async function stopSlaClock(
+  tx: Queryable,
+  params: {
+    readonly applicationId: number;
+    readonly at: Date;
+  },
+): Promise<{
+  stopped: boolean;
+  outcome: "met" | "breached" | null;
+  dueDate: string | null;
+}> {
+  const clock = await tx
+    .selectFrom("sla_clocks")
+    .select(["id", "due_date", "state", "outcome"])
+    .where("application_id", "=", params.applicationId)
+    .executeTakeFirst();
+
+  if (!clock) return { stopped: false, outcome: null, dueDate: null };
+  if (clock.state === "stopped") {
+    return {
+      stopped: false,
+      outcome: (clock.outcome as "met" | "breached" | null) ?? null,
+      dueDate: clock.due_date,
+    };
+  }
+
+  // Compared as civil dates, not instants. `due_date` is the date quoted to
+  // the applicant, and a timezone conversion here would move a deadline by a
+  // day in exactly the direction nobody notices until a member complains.
+  const decidedOn = params.at.toISOString().slice(0, 10);
+  const outcome = decidedOn <= clock.due_date ? "met" : "breached";
+
+  const result = await tx
+    .updateTable("sla_clocks")
+    .set({ state: "stopped", outcome, stopped_at: params.at })
+    .where("id", "=", clock.id)
+    .where("state", "!=", "stopped")
+    .executeTakeFirst();
+
+  if (Number(result.numUpdatedRows) !== 1) {
+    return { stopped: false, outcome: null, dueDate: clock.due_date };
+  }
+
+  return { stopped: true, outcome, dueDate: clock.due_date };
 }

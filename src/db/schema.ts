@@ -225,17 +225,10 @@ export interface CompanyUsersTable {
 /* -------------------------------------------------------------------------- */
 
 export type DocumentSubjectKind =
-  | "company"
-  | "representative"
-  | "director"
-  | "endorser"
-  | "payment";
+  "company" | "representative" | "director" | "endorser" | "payment";
 
 export type DocumentReviewState =
-  | "uploaded"
-  | "accepted"
-  | "rejected"
-  | "superseded";
+  "uploaded" | "accepted" | "rejected" | "superseded";
 
 export type DocumentScanState = "pending" | "clean" | "infected" | "skipped";
 
@@ -651,11 +644,7 @@ export interface ApplicationDirectorsTable {
 
 export type EndorsementRole = "proposer" | "seconder";
 export type EndorsementState =
-  | "invited"
-  | "endorsed"
-  | "declined"
-  | "expired"
-  | "superseded";
+  "invited" | "endorsed" | "declined" | "expired" | "superseded";
 /** Snapshotted at endorsement and re-checked at approval. */
 export type EndorserStanding = "active" | "lapsed" | "suspended" | "unknown";
 
@@ -868,10 +857,90 @@ export type PaymentState =
   | "cancelled";
 export type PaymentMethod = "pay_order" | "cash" | "cheque" | "online";
 export type RefundDisposition =
-  | "pending_decision"
-  | "refund_due"
-  | "forfeited"
-  | "refunded";
+  "pending_decision" | "refund_due" | "forfeited" | "refunded";
+
+/* -------------------------------------------------------------------------- */
+/* Membership: the register approval produces                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `lapsed` is reached by time, not by an actor.
+ *
+ * The 31 March expiry is evaluated on read against `membership_years`, the
+ * same way notice expiry already is, so nothing needs a timer and no job can
+ * fall behind and leave a lapsed member looking active. `suspended` is an
+ * act — today only a dishonoured fee reaches it — and `cancelled` is a
+ * reversed approval, which keeps its number forever because the number has
+ * already been quoted.
+ */
+export type MembershipStatus = "active" | "lapsed" | "suspended" | "cancelled";
+export type MembershipYearSource = "grant" | "renewal";
+export type ApplicationDecisionKind = "approved" | "rejected" | "returned";
+
+export interface MembershipsTable {
+  id: Generated<number>;
+  company_id: number;
+  /** Issued at approval, never later, never reused. */
+  membership_no: string;
+  membership_class: MembershipClass;
+  status: Generated<MembershipStatus>;
+  granted_on: CivilDate;
+  granted_by: number | null;
+  granted_by_application_id: number | null;
+  suspended_at: Date | null;
+  suspend_reason: string | null;
+  suspended_by: number | null;
+  cancelled_at: Date | null;
+  cancel_reason: string | null;
+  cancelled_by: number | null;
+  version: Generated<number>;
+  created_at: Instant;
+  updated_at: Instant;
+}
+
+export interface MembershipYearsTable {
+  id: Generated<number>;
+  membership_id: number;
+  label: string;
+  starts_on: CivilDate;
+  /**
+   * Materialised, not derived.
+   *
+   * This is the date printed on a certificate. Deriving it on read would mean
+   * a later edit to `membership_year_policy` silently reprinting a date
+   * somebody is holding on paper.
+   */
+  valid_until: CivilDate;
+  source: Generated<MembershipYearSource>;
+  payment_id: number | null;
+  created_at: Instant;
+}
+
+export interface ApplicationDecisionsTable {
+  id: Generated<number>;
+  application_id: number;
+  decision: ApplicationDecisionKind;
+  decided_by: number;
+  /** Snapshotted, never joined: the role held at the time is a fact. */
+  decided_by_role_code: string | null;
+  decided_at: InstantSet;
+  reason: string | null;
+  membership_id: number | null;
+  created_at: Instant;
+}
+
+export interface ConflictWaiversTable {
+  id: Generated<number>;
+  application_id: number;
+  /** A guard code from `src/membership/workflow.ts`. */
+  waived_guard: string;
+  reason: string;
+  granted_by: number;
+  granted_at: InstantSet;
+  /** The one person the waiver permits; a different approver gains nothing. */
+  granted_for: number;
+  created_at: Instant;
+}
 
 export interface PaymentsTable {
   id: Generated<number>;
@@ -879,6 +948,14 @@ export interface PaymentsTable {
   fee_kind: FeeKind;
   fee_schedule_id: number | null;
   amount: string;
+  /**
+   * What the instrument was actually drawn for, where that differs from
+   * `amount`. Class is self-declared, so a pay order for the wrong one of the
+   * six published amounts is a routine event rather than an anomaly.
+   */
+  amount_received: string | null;
+  /** Why the cashier accepted a short or over-drawn instrument. */
+  variance_reason: string | null;
   currency: Generated<string>;
   fx_rate: string | null;
   fx_rate_date: CivilDate | null;
@@ -893,6 +970,8 @@ export interface PaymentsTable {
   receipt_no: string | null;
   dishonoured_at: Date | null;
   dishonour_reason: string | null;
+  /** Who recorded it. A dishonour suspends a membership, so this is not optional. */
+  dishonoured_by: number | null;
   refund_disposition: RefundDisposition | null;
   version: Generated<number>;
   created_at: Instant;
@@ -925,6 +1004,17 @@ export interface PayOrdersTable {
   bank_match_note: string | null;
   /** SHA-256 of the normalised instrument triple; catches a reused pay order. */
   instrument_fingerprint: string;
+  /**
+   * SHA-256 of the normalised number and date, with no bank name in it.
+   *
+   * Not unique: two banks can issue instrument 000412 on the same day. It
+   * backs the near-duplicate refusal, which exists because the fingerprint
+   * deliberately does not alias bank names — so "UBL" and "United Bank
+   * Limited" on one physical instrument do not collide there.
+   */
+  instrument_key: string | null;
+  /** Why the cashier confirmed a near-duplicate was a different instrument. */
+  duplicate_cleared_note: string | null;
   created_at: Instant;
   updated_at: Instant;
 }
@@ -1021,6 +1111,11 @@ export interface Database {
   application_deficiencies: ApplicationDeficienciesTable;
   deficiency_items: DeficiencyItemsTable;
 
+  memberships: MembershipsTable;
+  membership_years: MembershipYearsTable;
+  application_decisions: ApplicationDecisionsTable;
+  conflict_waivers: ConflictWaiversTable;
+
   payments: PaymentsTable;
   pay_orders: PayOrdersTable;
   sla_clocks: SlaClocksTable;
@@ -1036,10 +1131,13 @@ export interface Database {
 export type ApplicationRow = Selectable<ApplicationsTable>;
 export type ApplicationCompanyRow = Selectable<ApplicationCompanyTable>;
 export type ApplicationDirectorRow = Selectable<ApplicationDirectorsTable>;
-export type ApplicationEndorsementRow = Selectable<ApplicationEndorsementsTable>;
+export type ApplicationEndorsementRow =
+  Selectable<ApplicationEndorsementsTable>;
 export type FeeScheduleRow = Selectable<FeeScheduleTable>;
 export type PaymentRow = Selectable<PaymentsTable>;
 export type SlaClockRow = Selectable<SlaClocksTable>;
+export type MembershipRow = Selectable<MembershipsTable>;
+export type MembershipYearRow = Selectable<MembershipYearsTable>;
 
 export type UserRow = Selectable<UsersTable>;
 export type SessionRow = Selectable<SessionsTable>;

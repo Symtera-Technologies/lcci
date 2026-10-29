@@ -5,6 +5,7 @@ import {
   TIER_WORKING_DAYS,
   TRANSITIONS,
   canTransition,
+  evaluateGuards,
   findTransition,
   isTerminal,
   applicantCanEdit,
@@ -56,9 +57,10 @@ function perfectFacts(state: ApplicationState): TransitionFacts {
     checklistClear: true,
     allPaymentsReceipted: true,
     bankMatchVerdictRecorded: true,
+    bankMatchMismatch: false,
     endorsersInGoodStanding: true,
     verifiedByUserId: 10,
-    receiptedByUserId: 11,
+    receiptedByUserIds: [11],
     originalsReceived: true,
   };
 }
@@ -242,11 +244,38 @@ describe("approval", () => {
 
   it("refuses the cashier who receipted the fee", () => {
     const decision = canTransition(
-      { ...facts, receiptedByUserId: 42 },
+      { ...facts, receiptedByUserIds: [42] },
       "approve",
       approver,
     );
     expect(decision.failedGuards).toContain("not_the_cashier");
+  });
+
+  it("refuses the second of two cashiers, not only the first", () => {
+    // An application with a foreign partner owes two fees by two separate pay
+    // orders, so two cashiers can receipt one each. A single recorded id would
+    // refuse whichever of them happened to be stored and let the other approve
+    // their own receipt.
+    const decision = canTransition(
+      { ...facts, receiptedByUserIds: [11, 42] },
+      "approve",
+      approver,
+    );
+    expect(decision.failedGuards).toContain("not_the_cashier");
+  });
+
+  it("refuses an approval of an instrument the cashier called a mismatch", () => {
+    // The verdict being *recorded* is not the same as it being favourable.
+    // Guarding only on "a verdict exists" would let a pay order flagged as
+    // drawn on somebody else's account through, which is the single outcome
+    // the whole control exists to prevent.
+    const decision = canTransition(
+      { ...facts, bankMatchMismatch: true },
+      "approve",
+      approver,
+    );
+    expect(decision.failedGuards).toContain("bank_match_confirmed");
+    expect(decision.failedGuards).not.toContain("bank_match_resolved");
   });
 
   it("refuses while the fee is unreceipted", () => {
@@ -362,6 +391,89 @@ describe("system transitions", () => {
     expect(
       canTransition(perfectFacts("AWAITING_APPLICANT"), "close_no_response", system).allowed,
     ).toBe(true);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Describing the file, as distinct from permitting the actor                 */
+/* -------------------------------------------------------------------------- */
+
+describe("evaluateGuards, which never short-circuits", () => {
+  /**
+   * The bug this pins shipped and was caught on the screen, not here.
+   *
+   * `canTransition` reports no failed guards when it refuses on the state, the
+   * audience or a missing permission — correctly, since it never evaluated
+   * them. The approval screen read its tick-list off that, so an application
+   * still in verification printed eight ticks, telling an approver the
+   * checklist was "complete and signed" while a round of it was open with an
+   * unresolved defect.
+   */
+  const APPROVE_GUARDS: readonly GuardCode[] = [
+    "checklist_complete",
+    "checklist_clear",
+    "payments_receipted",
+    "bank_match_resolved",
+    "bank_match_confirmed",
+    "endorsers_in_good_standing",
+    "not_the_verifier",
+    "not_the_cashier",
+  ];
+
+  it("reports the failures a wrong state makes canTransition skip", () => {
+    const facts = {
+      ...perfectFacts("UNDER_VERIFICATION"),
+      checklistCompleted: false,
+      checklistClear: false,
+    };
+
+    // No `approve` transition from here at all, so the decision is "unknown"
+    // and names nothing.
+    const decision = canTransition(facts, "approve", staff(["application.approve"]));
+    expect(decision.unknown).toBe(true);
+    expect(decision.failedGuards).toEqual([]);
+
+    // The facts, asked directly, say what is actually wrong with the file.
+    expect([...evaluateGuards(APPROVE_GUARDS, facts, 99)]).toEqual([
+      "checklist_complete",
+      "checklist_clear",
+    ]);
+  });
+
+  it("reports the failures a missing permission makes canTransition skip", () => {
+    const facts = {
+      ...perfectFacts("PENDING_APPROVAL"),
+      allPaymentsReceipted: false,
+    };
+
+    const decision = canTransition(facts, "approve", staff(["application.read"]));
+    expect(decision.missingPermission).toBe("application.approve");
+    expect(decision.failedGuards).toEqual([]);
+
+    expect([...evaluateGuards(APPROVE_GUARDS, facts, 99)]).toEqual([
+      "payments_receipted",
+    ]);
+  });
+
+  it("still names the identity guards against the actor it is given", () => {
+    // The display list is about the file, but two of the guards are about the
+    // person reading it, so the actor still has to be passed in.
+    const facts = perfectFacts("PENDING_APPROVAL");
+    expect([...evaluateGuards(APPROVE_GUARDS, facts, 10)]).toEqual([
+      "not_the_verifier",
+    ]);
+    expect([...evaluateGuards(APPROVE_GUARDS, facts, 11)]).toEqual([
+      "not_the_cashier",
+    ]);
+    expect(evaluateGuards(APPROVE_GUARDS, facts, 99)).toEqual([]);
+  });
+
+  it("agrees with canTransition wherever canTransition looked", () => {
+    const facts = { ...perfectFacts("PENDING_APPROVAL"), bankMatchMismatch: true };
+    const decision = canTransition(facts, "approve", staff(["application.approve"], 99));
+    expect([...decision.failedGuards]).toEqual([
+      ...evaluateGuards(APPROVE_GUARDS, facts, 99),
+    ]);
   });
 });
 

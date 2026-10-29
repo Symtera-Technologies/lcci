@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { getDb } from "@/db/client";
-import { requireMember } from "@/server/auth/dal";
+import { requireMemberPage } from "@/server/auth/dal";
 import {
   inFlightApplicationFor,
   loadDraft,
@@ -40,7 +40,7 @@ export default async function ApplyPage({
 }: {
   searchParams: Promise<{ step?: string }>;
 }) {
-  const actor = await requireMember();
+  const actor = await requireMemberPage("/membership/apply");
 
   // Before anything is created. `startOrResumeDraft` resumes a DRAFT and
   // nothing else, so calling it first for an applicant whose form is already

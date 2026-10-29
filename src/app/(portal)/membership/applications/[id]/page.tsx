@@ -3,12 +3,18 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AlertCircle, CheckCircle2, Clock } from "lucide-react";
 import { getDb } from "@/db/client";
-import { requireMember } from "@/server/auth/dal";
+import { requireMemberPage } from "@/server/auth/dal";
 import { outstandingFor, type OutstandingItem } from "@/membership/deficiency";
-import { PUBLIC_STAGE_LABELS, publicStage } from "@/membership/workflow";
+import { PUBLIC_STAGE_LABELS, type PublicStage } from "@/membership/workflow";
+import {
+  loadTracker,
+  type TimelineEntry,
+  type TrackerFee,
+  type TrackerMembership,
+} from "@/membership/tracker";
 import { TIER_LABELS } from "@/membership/fees";
-import { formatDate } from "@/lib/format";
-import type { ApplicationState, DocumentSubjectKind, ProcessingTier } from "@/db/schema";
+import { formatDate, formatMoney } from "@/lib/format";
+import type { DocumentSubjectKind } from "@/db/schema";
 import { UploadSlot, type UploadedDocument } from "@/components/membership/document-upload";
 import { RespondButton } from "@/components/membership/respond-button";
 import { respondToDeficiencyAction } from "./actions";
@@ -39,37 +45,24 @@ export default async function ApplicationPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const actor = await requireMember();
+  // The id first, so an expired session is sent back to the application the
+  // member was actually reading rather than to the list.
   const { id } = await params;
+  const actor = await requireMemberPage(`/membership/applications/${id}`);
 
   const applicationId = Number(id);
   if (!Number.isSafeInteger(applicationId) || applicationId <= 0) notFound();
 
   const db = getDb();
 
-  // Ownership in the `WHERE`, not in a check afterwards. A row read and then
-  // rejected has already been read, and it leaks through a log line or a
-  // count. `notFound` for both "not yours" and "does not exist", so the
-  // response cannot be used to discover which application ids exist.
-  const application = await db
-    .selectFrom("applications")
-    .leftJoin("sla_clocks", "sla_clocks.application_id", "applications.id")
-    .select([
-      "applications.id",
-      "applications.state",
-      "applications.public_ref",
-      "applications.processing_tier",
-      "applications.submitted_at",
-      "sla_clocks.due_date",
-    ])
-    .where("applications.id", "=", applicationId)
-    .where("applications.created_by", "=", actor.userId)
-    .executeTakeFirst();
+  // Ownership lives in `loadTracker`'s own `WHERE`, not in a check afterwards.
+  // A row read and then rejected has already been read, and it leaks through a
+  // log line or a count. Null for both "not yours" and "does not exist", so
+  // this `notFound` cannot be used to discover which application ids exist.
+  const tracker = await loadTracker(actor, applicationId, db);
+  if (!tracker) notFound();
 
-  if (!application) notFound();
-
-  const state = application.state as ApplicationState;
-  const stage = publicStage(state);
+  const stage = tracker.stage;
   // The deficiency and the three lookups its upload slots need, together.
   // Awaiting them inside the JSX would read more cleanly and would run them
   // one after another on a connection pool of three.
@@ -83,7 +76,16 @@ export default async function ApplicationPage({
   return (
     <main className="container-page py-16 lg:py-24">
       <div className="max-w-3xl">
-        <StageHeading stage={stage} />
+        <Link
+          href="/membership/applications"
+          className="text-[0.875rem] font-medium text-brand-700 underline decoration-brand-700/40 underline-offset-4 hover:decoration-brand-700"
+        >
+          ← Your applications
+        </Link>
+
+        <div className="mt-6">
+          <StageHeading stage={stage} />
+        </div>
 
         <h1 className="mt-3 font-display text-display-md font-semibold text-ink-950">
           {stage === "need_info"
@@ -92,20 +94,31 @@ export default async function ApplicationPage({
         </h1>
 
         <dl className="mt-8 grid gap-px overflow-hidden rounded-xl bg-stone-200 sm:grid-cols-3">
-          <Cell term="Your reference" detail={application.public_ref ?? "—"} emphasis />
+          <Cell term="Your reference" detail={tracker.reference ?? "—"} emphasis />
           <Cell
             term="Processing"
             detail={
-              application.processing_tier
-                ? TIER_LABELS[application.processing_tier as ProcessingTier]
-                : "—"
+              tracker.processingTier ? TIER_LABELS[tracker.processingTier] : "—"
             }
           />
           <Cell
-            term={stage === "need_info" ? "Was due by" : "Due by"}
-            detail={application.due_date ? formatDate(application.due_date) : "—"}
+            term={decided(stage) ? "Decided" : "Due by"}
+            detail={
+              decided(stage)
+                ? (tracker.slaOutcome === "breached"
+                    ? "Later than promised"
+                    : "Within the promised time")
+                : tracker.dueDate
+                  ? formatDate(tracker.dueDate)
+                  : "—"
+            }
           />
         </dl>
+
+        {/* The membership first, where there is one. It is the only thing on
+            this page a granted member came to see, and making them read past a
+            fee table to find their own number would be perverse. */}
+        {tracker.membership && <Membership membership={tracker.membership} />}
 
         {outstanding ? (
           <Deficiency
@@ -121,8 +134,235 @@ export default async function ApplicationPage({
         ) : (
           <WithTheChamber stage={stage} />
         )}
+
+        {tracker.fees.length > 0 && <Fees fees={tracker.fees} />}
+
+        {tracker.timeline.length > 0 && <Timeline entries={tracker.timeline} />}
       </div>
     </main>
+  );
+}
+
+/** Whether the Chamber has finished with this application, either way. */
+function decided(stage: PublicStage): boolean {
+  return (
+    stage === "approved" ||
+    stage === "not_approved" ||
+    stage === "withdrawn" ||
+    stage === "closed"
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* The membership, once granted                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What the grant email told them this page would show.
+ *
+ * "Sign in at the Chamber's website with this email address to see your
+ * membership" was, until A8, a promise the site did not keep: an approved
+ * application is not in flight, so nothing linked here and the wizard opened a
+ * fresh draft instead.
+ *
+ * The 31 March rule is restated rather than left to be inferred from the date.
+ * A member granted in February holds a membership that expires in weeks, and
+ * the one place they are certain to look at the date is here.
+ */
+function Membership({ membership }: { membership: TrackerMembership }) {
+  const suspended = membership.status === "suspended";
+  const cancelled = membership.status === "cancelled";
+  const lapsed = membership.status === "lapsed";
+
+  return (
+    <section
+      className={
+        suspended || cancelled
+          ? "mt-8 rounded-xl border border-urgent-300 bg-urgent-50/40 p-6"
+          : "mt-8 rounded-xl border border-success-300 bg-success-50/40 p-6"
+      }
+      aria-labelledby="membership-heading"
+    >
+      <h2
+        id="membership-heading"
+        className="font-display text-xl font-semibold text-ink-950"
+      >
+        Your membership
+      </h2>
+
+      <dl className="mt-5 space-y-3">
+        <div>
+          <dt className="text-[0.75rem] font-semibold tracking-wide text-stone-600 uppercase">
+            Membership number
+          </dt>
+          <dd className="mt-0.5 font-mono text-[1.25rem] font-semibold text-ink-950">
+            {membership.membershipNo}
+          </dd>
+        </div>
+
+        <div>
+          <dt className="text-[0.75rem] font-semibold tracking-wide text-stone-600 uppercase">
+            Class
+          </dt>
+          <dd className="mt-0.5 text-[0.9375rem] text-ink-900">
+            {membership.membershipClass === "corporate"
+              ? "Corporate"
+              : "Associate"}
+          </dd>
+        </div>
+
+        {membership.validUntil && (
+          <div>
+            <dt className="text-[0.75rem] font-semibold tracking-wide text-stone-600 uppercase">
+              Valid until
+            </dt>
+            <dd className="mt-0.5 text-[0.9375rem] text-ink-900">
+              {formatDate(membership.validUntil)}
+              {membership.yearLabel && ` · membership year ${membership.yearLabel}`}
+            </dd>
+          </div>
+        )}
+      </dl>
+
+      {/* Status as words, and only when it is not the ordinary case. "Active"
+          needs no banner; the other three are the ones a member must not have
+          to work out from a colour. */}
+      {suspended && (
+        <p className="mt-5 text-[0.9375rem] font-medium text-urgent-800">
+          This membership is suspended. The Chamber has written to you; please
+          quote the membership number when you reply.
+        </p>
+      )}
+      {cancelled && (
+        <p className="mt-5 text-[0.9375rem] font-medium text-urgent-800">
+          This membership has been cancelled. The number is not reissued and
+          remains on the Chamber&rsquo;s record.
+        </p>
+      )}
+      {lapsed && (
+        <p className="mt-5 text-[0.9375rem] font-medium text-ink-900">
+          This membership year has ended. Renewal reopens it.
+        </p>
+      )}
+
+      <p className="mt-5 text-[0.875rem] text-stone-600">
+        Membership expires on 31 March each year whatever the date of grant, so
+        the date above is the end of the current membership year and not twelve
+        months from the day you were granted it.
+      </p>
+    </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* The fee                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What is owed, and whether the Chamber has taken it in.
+ *
+ * Here because the alternative is a telephone call. A firm that posted a pay
+ * order three weeks ago has exactly one question, and the receipt number
+ * answers it without anybody at the Chamber stopping work to do so.
+ */
+function Fees({ fees }: { fees: readonly TrackerFee[] }) {
+  return (
+    <section className="mt-10" aria-labelledby="fees-heading">
+      <h2
+        id="fees-heading"
+        className="font-display text-xl font-semibold text-ink-950"
+      >
+        Your fee
+      </h2>
+
+      <ul className="mt-4 space-y-3">
+        {fees.map((fee) => (
+          <li
+            key={fee.feeKind}
+            className="rounded-xl border border-stone-200 bg-white p-5"
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <p className="text-[0.9375rem] font-medium text-ink-950">
+                {fee.label}
+              </p>
+              <p className="text-[1.0625rem] font-semibold text-ink-950">
+                {formatMoney(fee.amount, fee.currency)}
+              </p>
+            </div>
+
+            <p
+              className={
+                fee.dishonoured
+                  ? "mt-2 text-[0.875rem] font-medium text-urgent-800"
+                  : "mt-2 text-[0.875rem] text-ink-800"
+              }
+            >
+              {fee.dishonoured
+                ? "The bank returned this instrument unpaid. Please contact the Chamber, quoting your reference."
+                : fee.receiptNo
+                  ? `Receipted — ${fee.receiptNo}`
+                  : fee.settled
+                    ? "Settled."
+                    : "Not yet receipted. A cashier compares the pay order against your bank's account-maintenance certificate before issuing a receipt number."}
+            </p>
+
+            {fee.receivedAt && !fee.dishonoured && (
+              <p className="mt-1 text-[0.8125rem] text-stone-600">
+                Received {formatDate(fee.receivedAt.toISOString())}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* The history                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Where the application has been, in the applicant's own vocabulary.
+ *
+ * Built from the state-transition log and mapped through `publicStage`, so the
+ * Chamber's internal moves between desks collapse into one "Under review"
+ * line. The applicant is not shown `PENDING_APPROVAL`: it is a word that only
+ * helps them guess at a process they cannot influence, and it would commit the
+ * Chamber to explaining the difference between four internal states.
+ */
+function Timeline({ entries }: { entries: readonly TimelineEntry[] }) {
+  return (
+    <section className="mt-10" aria-labelledby="timeline-heading">
+      <h2
+        id="timeline-heading"
+        className="font-display text-xl font-semibold text-ink-950"
+      >
+        What has happened
+      </h2>
+
+      <ol className="mt-4 space-y-4 border-l border-stone-200 pl-5">
+        {entries.map((entry, index) => (
+          <li key={`${entry.stage}-${index}`} className="relative">
+            <span
+              className="absolute top-1.5 -left-[1.4375rem] h-2.5 w-2.5 rounded-full bg-brand-700 ring-4 ring-white"
+              aria-hidden
+            />
+            <p className="text-[0.9375rem] font-medium text-ink-950">
+              {entry.label}
+            </p>
+            <p className="mt-0.5 text-[0.8125rem] text-stone-600">
+              {formatDate(entry.at.toISOString())}
+            </p>
+            {entry.note && (
+              <p className="mt-2 rounded-lg border border-stone-200 bg-stone-50 p-3 text-[0.875rem] whitespace-pre-line text-ink-900">
+                {entry.note}
+              </p>
+            )}
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
@@ -270,9 +510,9 @@ function WithTheChamber({ stage }: { stage: keyof typeof PUBLIC_STAGE_LABELS }) 
     <section className="mt-10 rounded-xl border border-stone-200 bg-white p-6">
       <p className="text-[0.9375rem] text-ink-900">
         {stage === "approved"
-          ? "Your application has been approved. Your membership details follow by email."
+          ? "Your application has been approved. Your membership number and the date it runs to are above."
           : stage === "not_approved"
-            ? "Your application was not approved. The Chamber has written to you with the reason."
+            ? "Your application was not approved. The reason the Chamber recorded is in the history below, and it was emailed to you. You may submit a fresh application."
             : stage === "withdrawn" || stage === "closed"
               ? "This application is closed. You are welcome to apply again."
               : "Your application is with the Chamber. There is nothing for you to do; we will write to you if we need anything."}

@@ -304,6 +304,14 @@ async function buildOne(
   // list is genuinely late and the sort order can be judged. Writing the state
   // directly is honest here: the transitions that reach UNDER_VERIFICATION and
   // VERIFIED are A5's, and this script exists to give A5 something to work on.
+  //
+  // This back-date does not survive a calendar edit, and should not. Recording
+  // a holiday flags every clock spanning it, and `sla-recompute` then rebuilds
+  // the date from the clock's own start — which is the whole point of that job,
+  // and which throws away a date no calendar can account for. So a recompute
+  // leaves the queue with nothing overdue until this script is run again.
+  // Nudging the stored date instead would have preserved the fiction, at the
+  // price of a deadline nobody could derive.
   if (firm.backdateDays > 0) {
     await sql`
       UPDATE sla_clocks

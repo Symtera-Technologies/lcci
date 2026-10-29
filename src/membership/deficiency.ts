@@ -10,6 +10,7 @@ import type {
 import { ForbiddenError, requirePermission, type ActorContext } from "@/server/actor";
 import { writeAudit } from "@/server/audit";
 import { moveState, recordTransition } from "@/membership/applications";
+import { applicantContact } from "@/membership/notify";
 import { checkCompleteness } from "@/membership/submit";
 import { gatherFacts } from "@/membership/submit";
 import { writeSubmissionSnapshot } from "@/membership/snapshot";
@@ -298,14 +299,22 @@ export async function raiseDeficiency(
     // Queued inside the transaction, so an email promising a return that
     // rolled back cannot exist, and neither can a returned application whose
     // applicant was never told.
-    if (application.email) {
+    //
+    // The address comes from `applicantContact` and not from the row selected
+    // above, which carried only `application_company.email`. Where the form
+    // gives no address that fell through to no message at all — and an
+    // applicant who is not told what is missing has fifteen working days to
+    // answer a list they never received, after which a closure job nobody has
+    // built yet would close their file.
+    const contact = await applicantContact(tx, input.applicationId);
+    if (contact?.email) {
       await enqueue(
         {
-          to: application.email,
+          to: contact.email,
           template: "application-deficiency",
           payload: {
-            reference: application.public_ref ?? `#${input.applicationId}`,
-            firmName: application.firm_name ?? "your firm",
+            reference: contact.reference,
+            firmName: contact.firmName,
             summary: input.summary?.trim() || null,
             respondBy,
             items: items.map((item) => item.instruction.trim()),
@@ -329,7 +338,7 @@ export async function raiseDeficiency(
           respondBy,
           checklistId: signed ? Number(signed.id) : null,
           slaPauseId: pauseId,
-          notified: application.email !== null,
+          notified: contact?.email !== null && contact?.email !== undefined,
           items: items.map((item) => ({
             kind: item.kind,
             documentTypeCode: item.documentTypeCode ?? null,

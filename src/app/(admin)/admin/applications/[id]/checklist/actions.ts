@@ -7,6 +7,7 @@ import {
   beginVerification,
   completeChecklist,
   markVerified,
+  sendForApproval,
   saveChecklist,
   type SaveItemInput,
 } from "@/membership/verification";
@@ -203,6 +204,42 @@ export const markVerifiedAction = withAction(
     revalidatePath("/admin/applications");
 
     return ok("Marked verified. It now needs the fee receipted before approval.");
+  },
+);
+
+/**
+ * The officer's last act on the file.
+ *
+ * Separate from `markVerified` rather than folded into it, because the two can
+ * be days apart: the documents are judged when the officer reads them, and the
+ * fee is settled when the cashier gets to the counter. Doing both at once would
+ * mean an officer could not record that the papers are in order until the money
+ * had cleared.
+ */
+export const sendForApprovalAction = withAction(
+  {
+    name: "application.send_for_approval",
+    audience: "staff",
+    permission: "application.verify",
+    schema: target,
+    irreversible: true,
+  },
+  async ({ input, actor }) => {
+    if (!actor) return fail("Sign in again to continue.");
+
+    const result = await sendForApproval(actor, input.applicationId);
+
+    if (!result.ok) return fail(result.reasons.join(" "));
+
+    revalidatePath(`/admin/applications/${input.applicationId}/checklist`);
+    revalidatePath(`/admin/applications/${input.applicationId}/approval`);
+    revalidatePath(`/admin/applications/${input.applicationId}`);
+    revalidatePath("/admin/applications");
+
+    return ok(
+      "Sent for approval. The decision is the approver's, and it cannot be " +
+        "taken by whoever verified the file or receipted the fee.",
+    );
   },
 );
 

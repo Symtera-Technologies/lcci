@@ -156,6 +156,286 @@ export const TEMPLATES = {
   }),
 
   /**
+   * The grant, carrying the membership number.
+   *
+   * The number is in the body because it is the one piece of information the
+   * applicant has been waiting weeks for, and because it is what they will
+   * quote on everything afterwards. A message saying "your application has
+   * been approved, sign in to see your number" generates a phone call to the
+   * secretariat from every new member.
+   *
+   * `validUntil` is a civil date string the caller has already formatted, for
+   * the same reason the deficiency template takes one: this date is printed on
+   * the certificate, and a timezone conversion between here and the member's
+   * screen would move 31 March to 30 March.
+   *
+   * The 31 March rule is stated rather than left to be discovered. A member
+   * granted in February who finds out in April that they owe a renewal is a
+   * complaint the chamber will field, and the form's own rule is the answer —
+   * so it is said here, in the message that announces the grant, rather than
+   * in a renewal notice six weeks later.
+   */
+  "application-approved": template<
+    Localised & {
+      reference: string;
+      firmName: string;
+      membershipNo: string;
+      membershipClass: string;
+      validUntil: string;
+      note: string | null;
+    }
+  >({
+    stream: "transactional",
+    trigger: "An approver granted the membership.",
+    render(payload) {
+      const lines: string[] = [
+        `The Lahore Chamber of Commerce & Industry has approved the membership ` +
+          `application ${payload.reference} for ${payload.firmName}.`,
+        "",
+        `Membership number: ${payload.membershipNo}`,
+        `Class: ${payload.membershipClass}`,
+        `Valid until: ${payload.validUntil}`,
+        "",
+      ];
+
+      if (payload.note) {
+        lines.push(payload.note, "");
+      }
+
+      lines.push(
+        "Membership expires on 31 March each year regardless of the date of",
+        "grant, so the date above is the end of the current membership year and",
+        "not twelve months from today. A renewal notice will follow before it.",
+        "",
+        "Please quote the membership number in any correspondence with the",
+        "Chamber. Sign in at the Chamber's website with this email address to",
+        "see your membership and download your certificate.",
+        "",
+        t("email.footer.doNotReply", undefined, localeOf(payload)),
+      );
+
+      // Both values are chamber-issued and newline-free by construction, so
+      // these strips are insurance rather than a fix — the same insurance the
+      // deficiency template takes, and for the same reason: whoever changes
+      // the format of either later should not have to remember that one of
+      // them reaches a mail header.
+      const reference = payload.reference.replace(/[\r\n]+/g, " ").slice(0, 60);
+      const number = payload.membershipNo.replace(/[\r\n]+/g, " ").slice(0, 40);
+
+      return {
+        subject: `Membership approved — ${number} (application ${reference})`,
+        text: lines.join("\n"),
+      };
+    },
+  }),
+
+  /**
+   * Confirmation that the form arrived, and what it is going to cost.
+   *
+   * The message §7.1 asked for, minus the word it used. The spec promises
+   * "pay online → receipt emailed"; the fee is paid by pay order drawn on the
+   * firm's own bank, so at submission nothing has been receipted — the
+   * instrument is in an envelope and a cashier will compare it against the
+   * account-maintenance certificate days later. Acknowledging money the
+   * Chamber has not confirmed it holds is precisely what the separate
+   * cashier's signature on page 2 of the form exists to prevent, so the fee is
+   * *noted* here and `fee-receipted` is the real thing.
+   *
+   * The deadline is in it because the applicant paid for a tier. A
+   * three-working-day Executive promise whose date the applicant cannot see is
+   * not a promise, it is a price.
+   */
+  "application-received": template<
+    Localised & {
+      reference: string;
+      firmName: string;
+      membershipClass: string;
+      processingTier: string;
+      dueDate: string;
+      fees: readonly { label: string; amount: string }[];
+    }
+  >({
+    stream: "transactional",
+    trigger: "An applicant submitted their membership application.",
+    render(payload) {
+      const lines: string[] = [
+        "The Lahore Chamber of Commerce & Industry has received the membership",
+        `application for ${payload.firmName}.`,
+        "",
+        `Your reference: ${payload.reference}`,
+        `Class applied for: ${payload.membershipClass}`,
+        `Processing: ${payload.processingTier}`,
+        `Expected decision by: ${payload.dueDate}`,
+        "",
+        "Please quote the reference in any correspondence about this application.",
+        "",
+      ];
+
+      if (payload.fees.length > 0) {
+        lines.push("Fee noted with your application:");
+        for (const fee of payload.fees) {
+          lines.push(`  ${fee.label}: ${fee.amount}`);
+        }
+        lines.push(
+          "",
+          "This is not a receipt. The fee is paid by pay order, and a cashier has",
+          "to compare it against your bank's account-maintenance certificate",
+          "before it can be receipted. You will receive the receipt number by",
+          "email when that is done.",
+          "",
+        );
+      }
+
+      lines.push(
+        "What happens next. An officer checks the form and the attached documents",
+        "against the Chamber's thirteen-point list. If anything is missing or",
+        "unclear we will write to you with an itemised list, and the days you",
+        "take to answer are not counted against the date above. There is nothing",
+        "for you to do until then.",
+        "",
+        "You can see the progress of this application at any time by signing in",
+        "at the Chamber's website with this email address.",
+        "",
+        t("email.footer.doNotReply", undefined, localeOf(payload)),
+      );
+
+      const reference = payload.reference.replace(/[\r\n]+/g, " ").slice(0, 60);
+
+      return {
+        subject: `Application received — ${reference}`,
+        text: lines.join("\n"),
+      };
+    },
+  }),
+
+  /**
+   * The fee receipt, once a cashier has issued one.
+   *
+   * The receipt *number* is the point. Finance reconciles bank statements
+   * against it, the applicant quotes it when something goes wrong, and an
+   * applicant who has to telephone to ask whether their pay order cleared is a
+   * call the Chamber pays for twice — once to answer it, and once because the
+   * officer answering it has stopped verifying files.
+   *
+   * It says "recorded" rather than "cleared". A receipted pay order is one the
+   * Chamber has taken in and compared; whether the bank has actually realised
+   * the funds is a different fact, and `payments.dishonoured` exists because
+   * the two sometimes disagree weeks apart.
+   */
+  "fee-receipted": template<
+    Localised & {
+      reference: string;
+      firmName: string;
+      receiptNo: string;
+      amount: string;
+      receivedOn: string;
+      instrumentNo: string | null;
+    }
+  >({
+    stream: "transactional",
+    trigger: "A cashier receipted a fee on the application.",
+    render(payload) {
+      const lines: string[] = [
+        `The Chamber has recorded the membership fee for ${payload.firmName}.`,
+        "",
+        `Receipt number: ${payload.receiptNo}`,
+        `Amount: ${payload.amount}`,
+        `Received: ${payload.receivedOn}`,
+      ];
+
+      if (payload.instrumentNo) {
+        lines.push(`Pay order: ${payload.instrumentNo}`);
+      }
+
+      lines.push(
+        `Application: ${payload.reference}`,
+        "",
+        "Please keep the receipt number, and quote it rather than the pay order",
+        "number in any query about this payment.",
+        "",
+        "Recording the fee is not the decision on your application. The Chamber",
+        "will write to you separately when that is made.",
+        "",
+        t("email.footer.doNotReply", undefined, localeOf(payload)),
+      );
+
+      const receipt = payload.receiptNo.replace(/[\r\n]+/g, " ").slice(0, 40);
+      const reference = payload.reference.replace(/[\r\n]+/g, " ").slice(0, 60);
+
+      return {
+        subject: `Fee receipted — ${receipt} (application ${reference})`,
+        text: lines.join("\n"),
+      };
+    },
+  }),
+
+  /**
+   * The refusal.
+   *
+   * A7 would not write this in passing and said so; this is it, written on
+   * purpose. The approver's reason is carried verbatim, because the
+   * alternative — "your application was not approved, please contact the
+   * Chamber" — makes the secretariat's telephone the appeals process, and
+   * because the officer was asked to write that sentence for this reader.
+   *
+   * Two silences are deliberate and both are LCCI's to break. There is no
+   * appeal deadline or procedure, because LCCI has not defined one and
+   * inventing a window for challenging a membership decision is not a
+   * developer's call. And there is nothing about the fee beyond "we will
+   * write": a refused application may carry a receipted pay order, the
+   * disposition of that money is an open question, and a template that guessed
+   * either way would be the Chamber committing to a refund policy nobody has
+   * agreed.
+   */
+  "application-not-approved": template<
+    Localised & {
+      reference: string;
+      firmName: string;
+      reason: string;
+      feeReceipted: boolean;
+    }
+  >({
+    stream: "transactional",
+    trigger: "An approver refused the application.",
+    render(payload) {
+      const lines: string[] = [
+        "The Lahore Chamber of Commerce & Industry has not approved the",
+        `membership application ${payload.reference} for ${payload.firmName}.`,
+        "",
+        "The reason recorded by the Chamber:",
+        "",
+        // The approver's own words, indented so a multi-line reason reads as
+        // theirs rather than as ours.
+        ...payload.reason.split(/\r?\n/).map((line) => `  ${line}`),
+        "",
+      ];
+
+      if (payload.feeReceipted) {
+        lines.push(
+          "A fee has been recorded against this application. The Chamber will",
+          "write to you separately about it.",
+          "",
+        );
+      }
+
+      lines.push(
+        "If you believe this was decided on incomplete information, write to",
+        "membership@lcci.com.pk quoting the reference above. You may also submit",
+        "a fresh application; nothing in this decision prevents it.",
+        "",
+        t("email.footer.doNotReply", undefined, localeOf(payload)),
+      );
+
+      const reference = payload.reference.replace(/[\r\n]+/g, " ").slice(0, 60);
+
+      return {
+        subject: `Membership application ${reference} — not approved`,
+        text: lines.join("\n"),
+      };
+    },
+  }),
+
+  /**
    * A deliverability probe.
    *
    * Exists because "is mail working?" must be answerable without triggering a

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   PROTECTED_PREFIXES,
@@ -170,6 +170,63 @@ describe("route inventory", () => {
         20,
       );
     }
+  });
+});
+
+describe("the guard each protected page calls", () => {
+  /**
+   * `ROUTE_POLICY` says a page is protected. It does not say the page's guard
+   * answers properly when it refuses.
+   *
+   * Both guards come in two forms. `requireMember` and `requireStaff` throw,
+   * which is right inside an action or a route handler, where the wrapper
+   * turns the throw into a value. In a page nothing catches it, so the refusal
+   * renders as a 500 reading "A server error occurred. Reload to try again."
+   * Every page under `/membership` called the throwing form, so both of its
+   * refusals — a session that had expired, and an officer who followed a
+   * member's link — were that 500. Reloading fixes neither, and `proxy.ts` hid
+   * the common case by redirecting anyone with no cookie at all before a page
+   * ran at all.
+   *
+   * `requireMemberPage` and `requireStaffPage` are the forms that answer:
+   * `redirect()` where there is something useful to do, `forbidden()` where
+   * there is not. This test reads the source rather than driving a request,
+   * which is the weaker claim — it shows the right function is called, not
+   * what it does — but it is the claim that was false, and it still holds for
+   * a page added next month by someone who copied the wrong import.
+   */
+  const THROWING_GUARDS = [
+    "requireMember",
+    "requireStaff",
+    "requireActor",
+    "requirePermission",
+  ];
+
+  it("uses the page form, which answers, and not the throwing form", async () => {
+    const routes = await discoverRoutes();
+    const offenders: string[] = [];
+
+    for (const route of routes) {
+      if (route.kind !== "page") continue;
+      if (!isProtected(route.urlPath)) continue;
+      if (routePolicy(route.urlPath).policy?.public === true) continue;
+
+      const source = await readFile(path.join(APP_DIR, route.file), "utf8");
+
+      // The open bracket is the whole trick, and it is here instead of a word
+      // boundary because a regex is the wrong tool for a name that is a prefix
+      // of the name it must not match: `requireStaffPage(` does not contain
+      // `requireStaff(`, and every call site has the bracket.
+      const throwing = THROWING_GUARDS.find((name) =>
+        source.includes(`${name}(`),
+      );
+
+      if (throwing !== undefined) {
+        offenders.push(`${route.file} calls ${throwing}`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
   });
 });
 

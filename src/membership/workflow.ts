@@ -130,6 +130,7 @@ export type GuardCode =
   | "checklist_clear"
   | "payments_receipted"
   | "bank_match_resolved"
+  | "bank_match_confirmed"
   | "endorsers_in_good_standing"
   | "not_the_verifier"
   | "not_the_cashier"
@@ -148,7 +149,9 @@ export const GUARD_MESSAGES: Record<GuardCode, string> = {
   checklist_clear: "The verification checklist records an unresolved defect.",
   payments_receipted: "The fee has not been receipted by the cashier.",
   bank_match_resolved:
-    "An officer has not yet recorded whether the pay order matches the account-maintenance certificate.",
+    "The cashier has not yet recorded whether the pay order matches the account-maintenance certificate.",
+  bank_match_confirmed:
+    "The pay order does not match the account-maintenance certificate. The applicant must supply a corrected instrument, or a certificate for the account it was drawn on.",
   endorsers_in_good_standing:
     "A proposer or seconder no longer holds valid membership status.",
   not_the_verifier:
@@ -178,12 +181,36 @@ export interface TransitionFacts {
   readonly checklistCompleted: boolean;
   readonly checklistClear: boolean;
   readonly allPaymentsReceipted: boolean;
+  /**
+   * Whether every instrument that was taken in has been compared.
+   *
+   * Vacuously true where no instrument exists — a waived fee has nothing to
+   * compare, and a guard that cannot be satisfied by any action is a guard
+   * that strands the application rather than protecting it.
+   */
   readonly bankMatchVerdictRecorded: boolean;
+  /**
+   * Whether any recorded verdict is `mismatch`.
+   *
+   * Separate from `bankMatchVerdictRecorded` because the two failures need
+   * different sentences and different remedies: an unrecorded verdict waits
+   * on the cashier, while a mismatch waits on the applicant. Collapsing them
+   * into "a verdict exists" would let a pay order the cashier flagged as drawn
+   * on somebody else's account be approved, which is the one outcome this
+   * whole control exists to prevent.
+   */
+  readonly bankMatchMismatch: boolean;
   readonly endorsersInGoodStanding: boolean;
   /** Who completed the checklist, so approval can refuse the same person. */
   readonly verifiedByUserId: number | null;
-  /** Who receipted the fee, for the same reason. */
-  readonly receiptedByUserId: number | null;
+  /**
+   * Everyone who receipted a fee on this application, for the same reason.
+   *
+   * A list and not one id: an application with a foreign partner owes two fees
+   * by two separate pay orders, and two cashiers can receipt one each. Keeping
+   * only the first would let the second of them approve their own receipt.
+   */
+  readonly receiptedByUserIds: readonly number[];
   /**
    * Whether the physical bank certificate has been received over the counter.
    *
@@ -230,6 +257,8 @@ function evaluateGuard(guard: GuardCode, facts: TransitionFacts, actorUserId: nu
       return facts.allPaymentsReceipted;
     case "bank_match_resolved":
       return facts.bankMatchVerdictRecorded;
+    case "bank_match_confirmed":
+      return !facts.bankMatchMismatch;
     case "endorsers_in_good_standing":
       return facts.endorsersInGoodStanding;
     case "not_the_verifier":
@@ -242,11 +271,7 @@ function evaluateGuard(guard: GuardCode, facts: TransitionFacts, actorUserId: nu
         facts.verifiedByUserId !== actorUserId
       );
     case "not_the_cashier":
-      return (
-        actorUserId === null ||
-        facts.receiptedByUserId === null ||
-        facts.receiptedByUserId !== actorUserId
-      );
+      return actorUserId === null || !facts.receiptedByUserIds.includes(actorUserId);
     case "originals_received":
       return !ORIGINALS_GUARD_ENABLED || facts.originalsReceived;
   }
@@ -423,7 +448,7 @@ export const TRANSITIONS: readonly Transition[] = [
     to: "PENDING_APPROVAL",
     actor: "staff",
     permission: "application.verify",
-    guards: ["payments_receipted", "bank_match_resolved"],
+    guards: ["payments_receipted", "bank_match_resolved", "bank_match_confirmed"],
     note: "Where payment becomes a guard. The pay order arrived with the form, so receipting ran in parallel with verification; this is the point the two have to meet.",
   },
 
@@ -438,6 +463,7 @@ export const TRANSITIONS: readonly Transition[] = [
       "checklist_clear",
       "payments_receipted",
       "bank_match_resolved",
+      "bank_match_confirmed",
       "endorsers_in_good_standing",
       "not_the_verifier",
       "not_the_cashier",
@@ -548,6 +574,31 @@ export interface TransitionActorView {
  * applicant should be told about someone else's application, so it is only
  * reached by an actor who already holds the permission.
  */
+/**
+ * Which of these guards the facts fail, with nothing else asked.
+ *
+ * Separate from `canTransition` because the two questions are genuinely
+ * different. `canTransition` answers "may this actor do this now", and when the
+ * answer is no because of the state, the audience or a missing permission it
+ * stops there and reports no failed guards — correctly, since it never looked
+ * at them.
+ *
+ * A screen listing the approval block needs the other question: "what is true
+ * of this file", regardless of whether the person reading is allowed to act on
+ * it. Reusing the short-circuiting answer for that is how an approval checklist
+ * comes to print eight ticks beside a file whose checklist is still open.
+ *
+ * One implementation for both, so a guard cannot mean one thing to the server
+ * and another to the page describing it.
+ */
+export function evaluateGuards(
+  guards: readonly GuardCode[],
+  facts: TransitionFacts,
+  actorUserId: number | null,
+): readonly GuardCode[] {
+  return guards.filter((guard) => !evaluateGuard(guard, facts, actorUserId));
+}
+
 export function canTransition(
   facts: TransitionFacts,
   code: TransitionCode,
@@ -595,9 +646,7 @@ export function canTransition(
     };
   }
 
-  const failedGuards = transition.guards.filter(
-    (guard) => !evaluateGuard(guard, facts, actor.userId),
-  );
+  const failedGuards = evaluateGuards(transition.guards, facts, actor.userId);
 
   return {
     allowed: failedGuards.length === 0,

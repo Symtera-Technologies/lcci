@@ -5,6 +5,8 @@ import { envIsValid, envProblems } from "@/server/env";
 import { drain, prunePayloads } from "@/server/mail/outbox";
 import { sweep } from "@/server/rate-limit";
 import { verifyAuditChain } from "@/server/audit";
+import { systemActor } from "@/server/actor";
+import { recomputeFlaggedClocks } from "@/membership/calendar";
 import { jobSchedule, type JobName, type JobSchedule } from "@/server/jobs/schedule";
 
 /**
@@ -143,6 +145,30 @@ export const JOB_HANDLERS = {
         brokenAtId: null,
         cursor: reachedEnd ? 0 : cursor + result.checked,
       },
+    };
+  },
+
+  /**
+   * Move the deadlines a calendar edit flagged, and audit every move.
+   *
+   * Separated from the edit itself on purpose. A secretary entering five days
+   * of Eid should not wait on five full recomputes, and more importantly the
+   * edit must not fail because the recompute did — the notified holiday is a
+   * fact and belongs in the table whether or not the arithmetic behind it has
+   * caught up. The flag is what makes that safe: an edit that lands without
+   * its recompute leaves `needs_recompute` set, and this job finds it on the
+   * next tick rather than the deadlines quietly staying wrong.
+   *
+   * The system actor holds no permissions, which is why `recomputeFlaggedClocks`
+   * does not ask for one. It changes no decision and grants nothing; it
+   * restates a date the calendar already determined.
+   */
+  "sla-recompute": async (ctx) => {
+    const result = await recomputeFlaggedClocks(systemActor(ctx.runId), 50);
+    return {
+      processed: result.examined,
+      more: result.more,
+      detail: { moved: result.moved },
     };
   },
 

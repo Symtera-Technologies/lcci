@@ -320,6 +320,45 @@ export async function requireStaffAll(
  * this must be awaited in the render path — which it is, as the first line of
  * each page.
  */
+/**
+ * The guard a portal page calls, which the portal had been doing without.
+ *
+ * Every page under `/membership` called `requireMember()` raw, and both of its
+ * refusals are exceptions. Nothing caught them, so the answer to "a member
+ * whose session expired" and to "an officer who clicked a member link" was the
+ * same: a 500 reading "A server error occurred. Reload to try again." Reloading
+ * cannot fix either, and a 500 tells a member nothing and an officer less.
+ *
+ * The `proxy.ts` cookie check hides the common case — no cookie at all gets a
+ * redirect before a page renders — which is exactly why this was not noticed.
+ * A cookie that is present but expired, revoked, or minted for a staff account
+ * goes straight past it, because the proxy deliberately does not open a
+ * database connection.
+ *
+ * Two outcomes, and they are not the same thing:
+ *
+ * - **Session gone**: redirect to the member sign-in page carrying `next`, in
+ *   the same shape the proxy uses, so signing in returns them to the page they
+ *   asked for rather than to a dashboard.
+ * - **Signed in as staff**: `forbidden()`. Never a redirect — an officer sent
+ *   to the member form is being offered an emailed code for an account that
+ *   has no such method, and they will conclude their password is broken.
+ */
+export async function requireMemberPage(pathname?: string): Promise<ActorContext> {
+  try {
+    return await requireMember();
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) {
+      const next = pathname ? `?next=${encodeURIComponent(pathname)}` : "";
+      redirect(`/membership/sign-in${next}`);
+    }
+    if (error instanceof ForbiddenError) {
+      forbidden();
+    }
+    throw error;
+  }
+}
+
 export async function requireStaffPage(
   permission?: PermissionCode,
   options?: StaffGuardOptions,

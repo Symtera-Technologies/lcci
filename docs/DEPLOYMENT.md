@@ -57,6 +57,13 @@ things, and neither looks like a mistake in the configuration:
   `DB_HOST`/`DB_PORT` silently fall back to 127.0.0.1:3306 while `DB_USER` and
   the rest come from wherever they were set.
 
+One symptom is worth reading the right way round: **the `mysql` command line
+connecting happily is evidence for the socket case, not against it.** The CLI
+uses the socket automatically when the host is `localhost`; `mysql2` does not.
+"The credentials are correct" and "this process can reach the server" are
+different claims, and only the second one is in doubt here. `db:check` prints
+which `.env` files it found for the same reason.
+
 Either way this is **not only a build problem**: the running application
 connects the same way, so a host the build cannot reach is a host the site
 cannot serve from.

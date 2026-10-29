@@ -20,6 +20,8 @@
  */
 
 import process from "node:process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { getDb, sql } from "@/db/client";
 import { closePool } from "@/db/pool";
 import { env, envProblems } from "@/server/env";
@@ -118,6 +120,19 @@ async function main(): Promise<number> {
   console.log(`user     : ${env.db.user || "(not set)"}`);
   console.log(`target   : ${target()}`);
   console.log(`pool     : ${String(env.db.connectionLimit)} per process`);
+
+  // Which files these values could have come from, because "the credentials
+  // are correct" and "this process can see them" are different claims and the
+  // gap between them is most of the confusion on this host. `next build` reads
+  // both of these from the application root; cPanel's Node.js app screen is a
+  // third source that only the running application sees.
+  const roots = [".env", ".env.local"].map((name) => ({
+    name,
+    present: existsSync(path.join(process.cwd(), name)),
+  }));
+  console.log(
+    `env files: ${roots.map((f) => `${f.name} ${f.present ? "found" : "absent"}`).join(", ")}`,
+  );
   console.log("");
 
   const missing = envProblems;

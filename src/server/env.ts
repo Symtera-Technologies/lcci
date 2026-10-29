@@ -144,6 +144,26 @@ export const env = {
   db: {
     host: optional("DB_HOST", "127.0.0.1"),
     port: int("DB_PORT", 3306),
+
+    /**
+     * A unix socket path, which takes precedence over host and port.
+     *
+     * **The option shared cPanel usually needs.** MySQL there is commonly
+     * configured to listen on a socket only, with TCP on 127.0.0.1 refused —
+     * and `mysql2` does not do what the PHP and C clients do. Those treat the
+     * literal host `localhost` as "use the socket"; `mysql2` resolves it to
+     * 127.0.0.1 and opens a TCP connection regardless. So the cPanel panel
+     * says "Host: localhost", the value is copied in good faith, and the
+     * result is `ECONNREFUSED 127.0.0.1:3306` with nothing obviously wrong in
+     * the configuration.
+     *
+     * Empty means TCP, which is right for the development machine and for a
+     * VPS. Find the socket on a host that needs one with
+     * `mysqladmin variables | grep socket`, or read `socket=` from
+     * `/etc/my.cnf`; it is usually `/var/lib/mysql/mysql.sock`.
+     */
+    socket: optional("DB_SOCKET", ""),
+
     user: required("DB_USER"),
     password: required("DB_PASSWORD"),
     database: required("DB_NAME"),

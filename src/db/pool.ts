@@ -43,8 +43,14 @@ function createCorePool(): mysql.Pool {
   requireEnv();
 
   const pool = mysql.createPool({
-    host: env.db.host,
-    port: env.db.port,
+    // A socket wins over host and port when one is configured, and mysql2
+    // ignores host and port entirely once `socketPath` is set — which is why
+    // they are spread in rather than left alongside it. See `env.db.socket`
+    // for why shared cPanel usually needs this and why `DB_HOST=localhost`
+    // does not do it.
+    ...(env.db.socket
+      ? { socketPath: env.db.socket }
+      : { host: env.db.host, port: env.db.port }),
     user: env.db.user,
     password: env.db.password,
     database: env.db.database,

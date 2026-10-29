@@ -12,20 +12,66 @@ VPS.
 `next build` routinely exceeds the per-application memory ceiling on shared
 cPanel plans. Build on a developer machine or in CI, then ship the artefact.
 
-**The build needs a reachable database.** Since migration 0016 the public pages
-read their content from MySQL rather than from fixtures, and they are
-statically prerendered — so the machine running `npm run build` has to be able
-to connect to a database holding the published content, with the same
-`DB_*` variables the server uses. A build against an empty or unreachable
-database produces a site with empty sections rather than an error, because the
-repository has no fixture fallback by design. Pointing the build at production
-over an SSH tunnel is the straightforward answer; a restored dump is the
-alternative when the tunnel is not available.
+**The build needs a reachable database, and fails without one.** Since
+migration 0016 the public pages read their content from MySQL rather than from
+fixtures, and they are statically prerendered — so the machine running
+`npm run build` has to connect to a database holding the published content,
+with the same `DB_*` variables the server uses.
+
+An **unreachable** database fails the build, and Next reports the driver's own
+error against the page it was prerendering:
+
+```
+Error occurred prerendering page "/"
+Error: connect ECONNREFUSED 127.0.0.1:3306
+```
+
+That is the correct outcome — far better than shipping an empty homepage — but
+it says nothing about which setting is wrong, so check first:
 
 ```bash
 npm ci
+npm run db:check     # names the problem in a second, and the fix
 npm run build
 ```
+
+An **empty** database does not fail the build. It produces a site with empty
+sections and no error, because the repository has no fixture fallback by
+design. `db:check` warns about that case too, and exits non-zero.
+
+### Connecting on cPanel
+
+`ECONNREFUSED 127.0.0.1:3306` on this host almost always means one of two
+things, and neither looks like a mistake in the configuration:
+
+- **MySQL listens on a unix socket and refuses TCP.** `mysql2` is not the PHP
+  or C client: those read the literal host `localhost` as "use the socket",
+  `mysql2` resolves it to 127.0.0.1 and dials TCP. So copying "Host:
+  localhost" out of the cPanel panel produces exactly this error. Set
+  `DB_SOCKET` instead — find it with `mysqladmin variables | grep '  socket'`,
+  usually `/var/lib/mysql/mysql.sock`. It wins over `DB_HOST` and `DB_PORT`.
+- **The build shell has no environment.** Variables entered in cPanel’s
+  Node.js app screen belong to the running application and are **not** exported
+  into an SSH session. `next build` reads `.env` and `.env.local` from the
+  application root, so a build run over SSH sees only those files — and
+  `DB_HOST`/`DB_PORT` silently fall back to 127.0.0.1:3306 while `DB_USER` and
+  the rest come from wherever they were set.
+
+Either way this is **not only a build problem**: the running application
+connects the same way, so a host the build cannot reach is a host the site
+cannot serve from.
+
+If you are building off-box, the database still has to be reachable from the
+build machine: an SSH tunnel to production is the straightforward answer, and
+a restored dump is the alternative. Remote MySQL on cPanel is per-IP and has
+to be allowed for the build machine explicitly.
+
+**After every release, the prerendered pages hold whatever database the build
+saw.** They are rebuilt on the server, from the server’s own database, only
+when something revalidates them — and `content-revalidate` only fires when a
+scheduled publication or take-down time crosses. If nothing is scheduled, the
+build-time content persists. Publish or re-save one item after a deploy, or
+accept that the site shows the build machine’s content until something does.
 
 That produces:
 

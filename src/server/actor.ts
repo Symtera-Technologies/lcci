@@ -29,6 +29,20 @@ export interface ActorContext {
   readonly roleCode: string | null;
   readonly roleCodes: readonly string[];
   readonly permissions: ReadonlySet<PermissionCode>;
+  /**
+   * Department codes this actor's roles are scoped to, from `user_roles`
+   * where `scope_kind = 'department'`.
+   *
+   * Empty means unscoped, which for a `super_admin` or a `reviewer` is the
+   * whole chamber and for anyone else means they hold no departmental grant
+   * at all. The two are distinguished by the permission, not by this list:
+   * `content.read_draft` plus an empty scope is site-wide, and no
+   * `content.read_draft` is no access whatever the scopes say. Row scoping is
+   * a SQL predicate at the point of the read and never a post-fetch filter,
+   * because a filter has already read the data and will leak it through a
+   * count, an export or a log line.
+   */
+  readonly departmentScopes: readonly string[];
   /** One ULID per HTTP request, correlating every event the request writes. */
   readonly requestId: string;
   readonly ipHash: string | null;
@@ -54,6 +68,7 @@ export function systemActor(requestId: string = newUlid()): ActorContext {
     roleCode: null,
     roleCodes: [],
     permissions: new Set<PermissionCode>(),
+    departmentScopes: [],
     requestId,
     ipHash: null,
     userAgentHash: null,

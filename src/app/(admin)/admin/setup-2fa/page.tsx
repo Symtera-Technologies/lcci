@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getSession, requireStaffPage } from "@/server/auth/dal";
 import { newTotpSecret, otpauthUri } from "@/server/auth/totp";
 import { TotpEnrolment } from "@/components/admin/totp-enrolment";
@@ -17,11 +19,20 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 /**
- * Two-factor enrolment — the gate, not an option.
+ * Two-factor enrolment, reached two ways: by choice from `/admin/security`
+ * inside a fully signed-in session, and under compulsion by an account an
+ * administrator has required two-factor on, which cannot reach anything else
+ * until it pairs an app.
  *
- * `allowBeforeMfa` is what makes it reachable by an account that has nothing
- * to present yet. It is one of exactly two routes that hold that flag, and the
- * route policy declares it so the two cannot drift apart unnoticed.
+ * That second route is why `allowBeforeMfa` is back. It was removed when
+ * two-factor became each staff member's own setting, on the reasoning that
+ * enrolment always happens inside an already-trusted session — true then, and
+ * untrue the moment an administrator could impose the requirement. Without the
+ * exemption this page is the destination of its own guard and loops.
+ *
+ * The exemption is deliberately wider than the rule, so the rule is restated
+ * below: it admits an account that owes an *enrolment*, and the check in the
+ * body turns away one that owes a *code*.
  *
  * A fresh secret per render is deliberate: a half-finished enrolment leaves no
  * state behind, so abandoning the page and coming back simply starts again.
@@ -35,22 +46,71 @@ export default async function SetupTwoFactorPage() {
   const session = await getSession();
   if (!actor.userId || !session) return null;
 
+  // An account that owes a code can produce one, and must. Letting a session
+  // that has not yet produced it pair a *new* authenticator would make a stolen
+  // password sufficient on its own: the thief pairs their own app over the real
+  // holder's and the second factor is theirs. The enrolment action states the
+  // same rule again, because this check is not the control — it only keeps the
+  // holder off a page that would refuse them.
+  if (session.session.mfaSatisfiedAt === null && session.user.twoFactorEnabled) {
+    redirect("/admin/sign-in");
+  }
+
   const { base32 } = newTotpSecret();
+
+  const replacing = session.user.mfaMode === "totp";
+
+  // An account an administrator has required two-factor on arrives here owing
+  // an enrolment rather than choosing one, and this is the only page its
+  // session can reach. The second clause is already guaranteed by the redirect
+  // above and is written out anyway, so that what this flag means survives
+  // somebody moving or relaxing that redirect.
+  const compelled =
+    session.session.mfaSatisfiedAt === null && !session.user.twoFactorEnabled;
 
   return (
     <main className="mx-auto w-full max-w-2xl px-6 py-14">
-      <p className="text-[0.8125rem] font-medium uppercase tracking-[0.12em] text-stone-500">
-        Chamber staff
-      </p>
+      {/*
+        No breadcrumb for an account that was sent here. `/admin/security` sits
+        behind the very gate this page exists to pass, so the link would bounce
+        straight back — a way out that is not one reads as a broken page.
+      */}
+      {!compelled && (
+        <nav aria-label="Breadcrumb" className="text-[0.875rem]">
+          <Link
+            href="/admin/security"
+            className="text-ink-700 underline decoration-ink-300 underline-offset-4 hover:decoration-ink-600"
+          >
+            Your sign-in
+          </Link>
+        </nav>
+      )}
+      {/*
+        Deliberately the same words whether this is a first enrolment or a
+        replacement, and that is not laziness. Confirming enrolment re-renders
+        this page with `replacing` now true, so a heading that read "Turn
+        two-factor on" would change to "Pair a different authenticator" at the
+        moment of success, above a panel announcing the enrolment that just
+        happened. The difference between the two cases is a warning about
+        losing a working authenticator, which belongs beside the button that
+        does it — `TotpEnrolment` carries it, and stops carrying it once there
+        is nothing left to warn about.
+      */}
       <h1 className="mt-2 text-[1.75rem] font-semibold tracking-tight text-ink-950">
-        Set up two-factor sign-in
+        Two-factor sign-in
       </h1>
       <p className="mt-3 max-w-prose text-[0.9375rem] leading-relaxed text-ink-700">
-        Staff accounts approve memberships, receipt money and can read every
-        identity document in the system, so a password alone is not enough. Pair
-        an authenticator app with your account to continue — there is nothing
-        else this account can reach until you do.
+        Pair an authenticator app with your account. After your password,
+        signing in will ask for the six-digit code the app is showing — so
+        somebody who learns your password still cannot get in.
       </p>
+      {compelled && (
+        <p className="mt-4 max-w-prose rounded-md border border-stone-200 bg-stone-50 px-4 py-3 text-[0.9375rem] leading-relaxed text-ink-800">
+          An administrator has made two-factor sign-in a requirement on this
+          account, so this is the only page you can reach until an app is
+          paired.
+        </p>
+      )}
 
       <div className="mt-10">
         <TotpEnrolment
@@ -63,7 +123,7 @@ export default async function SetupTwoFactorPage() {
             accountName: session.user.email,
             issuer: "LCCI",
           })}
-          replacing={session.user.mfaMode === "totp"}
+          replacing={replacing}
         />
       </div>
     </main>

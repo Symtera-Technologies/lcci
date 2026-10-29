@@ -284,3 +284,108 @@ describe("routePolicy", () => {
     expect(decision.policy).toBeNull();
   });
 });
+
+/**
+ * The half-authenticated surface.
+ *
+ * A staff session whose second factor is outstanding is refused everywhere
+ * except the routes carrying `allowBeforeMfa`, so that set *is* the surface a
+ * stolen password reaches before producing a code. It must stay at two: the
+ * sign-in page, which renders the code form, and the enrolment page, which an
+ * account an administrator has required two-factor on must reach before it has
+ * anything to present.
+ *
+ * Asserted as an exact set rather than a maximum, because the realistic
+ * failure is somebody adding the flag to a third route to make a redirect loop
+ * go away — which silently widens that surface and would otherwise pass every
+ * other test in this file.
+ */
+describe("the routes reachable before the second factor", () => {
+  it("is exactly the sign-in page and two-factor enrolment", () => {
+    const exempt = Object.entries(ROUTE_POLICY)
+      .filter(([, policy]) => policy.allowBeforeMfa)
+      .map(([path]) => path)
+      .sort();
+
+    expect(exempt).toEqual(["/admin/setup-2fa", "/admin/sign-in"]);
+  });
+
+  it("grants the exemption to no route outside /admin", () => {
+    for (const [path, policy] of Object.entries(ROUTE_POLICY)) {
+      if (policy.allowBeforeMfa) expect(path.startsWith("/admin/")).toBe(true);
+    }
+  });
+
+  /**
+   * The account screens must never be in that set. They are where a
+   * requirement is imposed and lifted, so reaching them with a password alone
+   * would make the requirement self-service for anyone holding one.
+   */
+  it("never exempts the staff account screens", () => {
+    for (const path of ["/admin/users", "/admin/users/new", "/admin/users/[id]"]) {
+      expect(ROUTE_POLICY[path]?.allowBeforeMfa).toBeUndefined();
+      expect(ROUTE_POLICY[path]?.permissions).toContain("user.manage");
+    }
+  });
+});
+
+/**
+ * The same surface, one layer down.
+ *
+ * `ROUTE_POLICY` governs pages. A server action is separately addressable and
+ * carries its own `allowBeforeMfa`, so a stolen password reaches the union of
+ * the two sets, not just the routes — and the action set has no inventory of
+ * its own because actions are not files Next enumerates.
+ *
+ * So enumerate them here. Two actions hold the flag, each the counterpart of
+ * an exempt route: presenting a code or a recovery code, and pairing an app
+ * for an account that has none.
+ *
+ * `enrolAction` is the one worth staring at. The flag admits any staff session
+ * that owes a second factor, including one whose account *is* paired — which
+ * would let a password alone pair a new authenticator over the real holder's.
+ * The handler narrows it, and this test asserts the narrowing is still there,
+ * because deleting it leaves a file that compiles, passes every other test and
+ * hands over the second factor.
+ */
+describe("the actions reachable before the second factor", () => {
+  async function actionFiles(): Promise<Map<string, string>> {
+    const found = new Map<string, string>();
+    async function walk(dir: string): Promise<void> {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) await walk(full);
+        else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
+          found.set(full.split(path.sep).join("/"), await readFile(full, "utf8"));
+        }
+      }
+    }
+    await walk(path.join(process.cwd(), "src", "app"));
+    return found;
+  }
+
+  it("is exactly the sign-in and enrolment actions", async () => {
+    const carrying = [...(await actionFiles())]
+      .filter(([, source]) => /^\s*allowBeforeMfa:\s*true,?$/m.test(source))
+      .map(([file]) => file.slice(file.indexOf("src/app")))
+      .sort();
+
+    expect(carrying).toEqual([
+      "src/app/(admin)/admin/setup-2fa/actions.ts",
+      "src/app/(admin)/admin/sign-in/actions.ts",
+    ]);
+  });
+
+  it("keeps the enrolment action's own refusal of a session owing a code", async () => {
+    const source = (await actionFiles()).get(
+      path
+        .join(process.cwd(), "src/app/(admin)/admin/setup-2fa/actions.ts")
+        .split(path.sep).join("/"),
+    );
+
+    expect(source).toBeDefined();
+    expect(source).toMatch(
+      /session\.session\.mfaSatisfiedAt === null\s*&&\s*session\.user\.twoFactorEnabled/,
+    );
+  });
+});

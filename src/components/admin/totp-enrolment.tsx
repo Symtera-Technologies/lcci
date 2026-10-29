@@ -148,10 +148,10 @@ function RecoveryCodes({ codes }: { codes: string[] }) {
 
       <p>
         <Link
-          href="/admin"
+          href="/admin/security"
           className="inline-flex h-11 items-center justify-center rounded-lg bg-brand-400 px-5 text-[0.9375rem] font-medium tracking-tight text-ink-950 shadow-sm transition-colors hover:bg-brand-300"
         >
-          I have saved them — continue
+          I have saved them — back to your sign-in settings
         </Link>
       </p>
     </div>

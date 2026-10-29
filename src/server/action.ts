@@ -110,9 +110,14 @@ export interface ActionOptions<TSchema extends z.ZodType> {
    */
   irreversible?: boolean;
   /**
-   * Set only by the two actions that run while a staff session is still
-   * half-authenticated: submitting the authenticator code, and enrolling one.
-   * Everything else must be refused until the second factor is satisfied.
+   * Set only by the one action that runs while a staff session is still
+   * half-authenticated: submitting the authenticator code. Everything else
+   * must be refused until the second factor is satisfied.
+   *
+   * Enrolment used to hold it too, when an account with no authenticator
+   * could reach nothing but the enrolment page. Two-factor is now each staff
+   * member's own setting, so enrolling happens inside a fully signed-in
+   * session and the exemption would be a hole rather than a convenience.
    */
   allowBeforeMfa?: boolean;
 }

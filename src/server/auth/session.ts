@@ -254,6 +254,15 @@ export interface ValidatedSession {
     fullName: string;
     roleVersion: number;
     mfaMode: string;
+    /**
+     * Whether two-factor is on, and whether an administrator has required it.
+     *
+     * Both carried on the session so the guards can decide what a
+     * half-authenticated staff session owes — a code, or an enrolment — from a
+     * row already loaded rather than a second query per request.
+     */
+    twoFactorEnabled: boolean;
+    twoFactorRequired: boolean;
   };
 }
 
@@ -291,6 +300,8 @@ export async function validateSessionToken(
       "users.full_name",
       "users.status",
       "users.mfa_mode",
+      "users.totp_secret_enc",
+      "users.mfa_required",
       "users.role_version as user_role_version",
     ])
     .where("sessions.id", "=", id)
@@ -350,6 +361,12 @@ export async function validateSessionToken(
         fullName: row.full_name,
         roleVersion: row.user_role_version,
         mfaMode: row.mfa_mode,
+        // Both halves must agree, as everywhere else: a row with a secret but
+        // the mode unset reads as off, so a hand-edit in phpMyAdmin cannot
+        // demand a code the holder does not know they need.
+        twoFactorEnabled: row.mfa_mode === "totp" && row.totp_secret_enc !== null,
+        // mysql2 hands back TINYINT(1) as 0 or 1, not a boolean.
+        twoFactorRequired: row.mfa_required === 1,
       },
     },
   };

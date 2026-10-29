@@ -18,11 +18,14 @@ export const dynamic = "force-dynamic";
  * Staff sign-in.
  *
  * Which of the two steps renders is read off the session, not held in the
- * client: a staff session exists after the password with `mfa_satisfied_at`
- * NULL, and `requireStaff` refuses every route but this one and enrolment
- * until it is set. So a refresh, a second tab and the back button all land on
- * the correct step, and there is no half-authenticated state anywhere except
- * the row that represents it.
+ * client: after the password a staff session exists with `mfa_satisfied_at`
+ * NULL where a code is still owed, and `requireStaff` refuses every route but
+ * this one until it is set. So a refresh, a second tab and the back button all
+ * land on the correct step, and there is no half-authenticated state anywhere
+ * except the row that represents it.
+ *
+ * Most accounts never see the second step: two-factor is off by default and
+ * each staff member turns it on for themselves at `/admin/security`.
  */
 export default async function StaffSignInPage({
   searchParams,
@@ -35,10 +38,16 @@ export default async function StaffSignInPage({
   const session = signedOut ? null : await getSession();
   const staff = session?.user.userType === "staff" ? session : null;
 
+  // A staff session that is already trusted has nothing to do here. That
+  // includes an account with two-factor off, whose session is created
+  // satisfied.
   if (staff && staff.session.mfaSatisfiedAt !== null) redirect("/admin");
-  // A staff account that has not enrolled an authenticator can reach exactly
-  // one page, and this is not it.
-  if (staff && staff.user.mfaMode !== "totp") redirect("/admin/setup-2fa");
+
+  // Owing a second factor is not the same as owing a *code*. An account an
+  // administrator has required two-factor on, with nothing paired, has no code
+  // to produce — rendering the code form for it is a box it cannot fill and no
+  // way out but signing out again. Send it to enrolment instead.
+  if (staff && !staff.user.twoFactorEnabled) redirect("/admin/setup-2fa");
 
   return (
     <main className="mx-auto w-full max-w-md px-6 py-16 sm:py-24">

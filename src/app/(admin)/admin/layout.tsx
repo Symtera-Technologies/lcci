@@ -67,6 +67,21 @@ export default async function AdminLayout({ children }: { children: ReactNode })
                 </Link>
               )}
               {/*
+                The other half of the backend. Gated on `content.read_draft`
+                rather than on any content grant, because that permission is
+                what separates somebody who edits the site from somebody who
+                only works the queues — a cashier holds no content grant at all
+                and should not be shown the newsroom.
+              */}
+              {actor?.permissions.has("content.read_draft") && (
+                <Link
+                  href="/admin/content"
+                  className="font-medium text-ink-700 underline decoration-transparent underline-offset-4 hover:decoration-ink-400"
+                >
+                  Content
+                </Link>
+              )}
+              {/*
                 Last, and only for the accounts that hold it. The calendar is
                 reference data a handful of people maintain, not a daily
                 destination, and putting it beside the queues would invite the
@@ -86,6 +101,19 @@ export default async function AdminLayout({ children }: { children: ReactNode })
                 find is not oversight — somebody has to be able to open it on
                 the day a decision is questioned, without asking a developer.
               */}
+              {/*
+                Account administration, next to the audit log because the two
+                are the same job: who may do what, and what they did. Gated on
+                `user.manage`, which only a super administrator holds by seed.
+              */}
+              {actor?.permissions.has("user.manage") && (
+                <Link
+                  href="/admin/users"
+                  className="font-medium text-ink-700 underline decoration-transparent underline-offset-4 hover:decoration-ink-400"
+                >
+                  Staff
+                </Link>
+              )}
               {actor?.permissions.has("audit.read") && (
                 <Link
                   href="/admin/audit"
@@ -98,6 +126,21 @@ export default async function AdminLayout({ children }: { children: ReactNode })
 
             <div className="ml-auto flex items-center gap-4 text-sm">
               <span className="text-stone-600">{staff.user.fullName}</span>
+              {/*
+                Beside the name rather than in the section nav, because it is
+                not a part of the backend — it is this account's own sign-in,
+                and it is ungated for the same reason: every staff member must
+                be able to reach their own two-factor setting without finding a
+                super administrator first. A link rather than a buried URL
+                because a security setting nobody can find is a security
+                setting nobody uses.
+              */}
+              <Link
+                href="/admin/security"
+                className="font-medium text-ink-700 underline decoration-transparent underline-offset-4 hover:decoration-ink-400"
+              >
+                Your sign-in
+              </Link>
               <form action={signOutStaff}>
                 <button
                   type="submit"

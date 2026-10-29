@@ -167,14 +167,47 @@ export const ROUTE_POLICY: Record<string, RoutePolicy> = {
     note: "Staff password + authenticator sign-in. Separate from the member page because the credentials are different: staff have a password and an app, members have an emailed code and no password at all.",
   },
 
+  "/admin/security": {
+    audience: "staff",
+    // Deliberately empty, and it must stay that way. Every staff account
+    // manages its own sign-in; requiring a grant would mean an officer who
+    // turned two-factor on could not turn it off without a super
+    // administrator, and the workaround people invent for that is a shared
+    // login. The page only ever reads and writes the signed-in actor's own
+    // row, so "any staff account" is the correct audience, not a loose one.
+    permissions: [],
+    note: "A staff member's own sign-in settings: two-factor on or off, recovery codes remaining. Turning it off re-asks for the password, because a session left open on a shared machine must not be enough to remove a factor.",
+  },
+
   "/admin/setup-2fa": {
-    // The other half of the enrolment gate. An account with no authenticator
-    // reaches this and nothing else, which is what makes two-factor
-    // mandatory rather than aspirational.
-    allowBeforeMfa: true,
     audience: "staff",
     permissions: [],
-    note: "Two-factor enrolment. Generates a fresh secret per render and leaves no half-enrolled state behind; the recovery codes are shown once in the action result, never through a redirect.",
+    // `allowBeforeMfa`, for one case only: an account an administrator has
+    // required two-factor on, which has nothing to present yet and must be
+    // able to reach this page and nothing else. Most accounts arrive here
+    // from /admin/security inside a fully trusted session and never touch the
+    // exemption, because a session is only half-authenticated when it owes a
+    // code or owes an enrolment.
+    allowBeforeMfa: true,
+    note: "Two-factor enrolment, reached from /admin/security by choice or from sign-in when an administrator has required it. Generates a fresh secret per render and leaves no half-enrolled state behind; the recovery codes are shown once in the action result, never through a redirect.",
+  },
+
+  "/admin/users": {
+    audience: "staff",
+    permissions: ["user.manage"],
+    note: "Staff accounts, with two-factor state as a column — the point being that an optional setting needs somebody able to see who has taken it up. Members are not listed: they have no password and no roles.",
+  },
+
+  "/admin/users/new": {
+    audience: "staff",
+    permissions: ["user.manage"],
+    note: "Creates a staff account as `invited`, with a generated password returned once in the action result. Never a redirect, which would put a live credential in the access log and in Referer.",
+  },
+
+  "/admin/users/[id]": {
+    audience: "staff",
+    permissions: ["user.manage"],
+    note: "One colleague: name, status, roles and whether two-factor is required of them. An administrator's own row renders read-only, and `updateStaff` refuses it server-side — otherwise anyone required to use two-factor could simply unrequire themselves.",
   },
 
   "/admin/applications": {
@@ -255,6 +288,53 @@ export const ROUTE_POLICY: Record<string, RoutePolicy> = {
     // meant handing them a page organised around every director's CNIC.
     permissions: ["payment.read"],
     note: "Cashier receipting and the pay-order / bank-certificate control. Receipting itself needs payment.receipt, checked by the action; this route only decides who may look.",
+  },
+
+  /* --- The CMS ---------------------------------------------------------- */
+
+  "/admin/content": {
+    audience: "staff",
+    // `content.read_draft`, which is what distinguishes somebody who edits the
+    // site from somebody who merely works in the backend. A cashier holds no
+    // content grant at all and should not be shown the newsroom.
+    permissions: ["content.read_draft"],
+    note: "The content hub, grouped by part of the site rather than by content type: an editor thinks \"the homepage is wrong\", not \"I need to edit a service tile\". Counts carry the same department predicate as the lists, so the number here is what the editor will find inside.",
+  },
+
+  "/admin/content/[type]": {
+    audience: "staff",
+    permissions: ["content.read_draft"],
+    note: "One content type's list, newest change first, filtered by status and searched by title. Department-scoped in SQL. The status column says what an editor decided; the note under it says whether a visitor can actually see it, which for a scheduled or retired item is not the same thing.",
+  },
+
+  "/admin/content/[type]/new": {
+    audience: "staff",
+    // The narrower grant, and the only route under /admin/content that needs
+    // it. Creating is its own right: a reviewer may read every draft in the
+    // chamber and have no business starting one.
+    permissions: ["content.create"],
+    note: "A new content item. Whatever is submitted, the row lands at the schema's draft default — nothing on the form can set a status, because status changes are the workflow's and carry their own permissions.",
+  },
+
+  "/admin/content/[type]/[id]": {
+    audience: "staff",
+    // `content.read_draft` to look; `content.edit` is checked by the save
+    // action and `content.media.manage` by the library. A reviewer who can
+    // read but not change is a legitimate state, and the same page serves it.
+    permissions: ["content.read_draft"],
+    note: "One item, open for editing. Addressed by id and not by slug, because the slug is the editable public address. Saving is guarded on the version the form was rendered from, so two editors with the same release open cannot silently overwrite each other. Not found and not-your-department are both a 404, so the route is not an existence oracle for embargoed copy.",
+  },
+
+  "/admin/media": {
+    audience: "staff",
+    permissions: ["content.read_draft"],
+    note: "The image library, labelled by the description a screen reader reads rather than by filename. Registering an image needs content.media.manage, checked by the action. It does not accept uploads: every row names a file a deploy has already put on the site, because there is nowhere for runtime bytes to live that survives a release.",
+  },
+
+  "/admin/media/[id]": {
+    audience: "staff",
+    permissions: ["content.read_draft"],
+    note: "One image, its description, and every page that uses it. The usage list is the point: the same photograph can be a hero on one page and a sharing image on another, and new alt text has to still describe the picture on all of them.",
   },
 
   /* --- API -------------------------------------------------------------- */

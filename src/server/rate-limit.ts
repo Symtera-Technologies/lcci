@@ -89,6 +89,24 @@ export const LIMITS = {
     windowSeconds: 900,
     strategy: "sliding",
   },
+  /**
+   * A staff member confirming their own password to change a security
+   * setting — today, to turn two-factor off.
+   *
+   * Tighter than the sign-in limit, and sliding, because the attacker this
+   * guards against is not at the front door: they are holding a session
+   * borrowed from an unlocked machine and guessing at the password that
+   * protects the one control that would make the theft permanent. Five
+   * attempts an hour is more than a person who knows their own password
+   * needs. `login_throttle` escalates on top of this, on the same subject
+   * pair as the sign-in form, so grinding here locks the account there too.
+   */
+  staffReauth: {
+    scope: "login:reauth:account",
+    limit: 5,
+    windowSeconds: 3600,
+    strategy: "sliding",
+  },
   /** Public forms: newsletter, trade enquiry, contact. */
   publicFormIp: {
     scope: "form:public:ip",
@@ -150,6 +168,21 @@ export const LIMITS = {
     windowSeconds: 3600,
     strategy: "sliding",
     minIntervalSeconds: 5,
+  },
+  /**
+   * A content save, per staff account.
+   *
+   * Generous, for the same reason the autosave limit is: this is an editor
+   * working, and a limit tight enough to be interesting would start refusing
+   * somebody's copy. It is here because each save is a transaction plus an
+   * audit insert plus a revalidation of every public page, so a scripted loop
+   * is expensive in a way an ordinary read is not.
+   */
+  contentSave: {
+    scope: "content:save:actor",
+    limit: 300,
+    windowSeconds: 3600,
+    strategy: "fixed",
   },
   /** CSP violation reports, per address. Browsers can be enthusiastic. */
   cspReportIp: {

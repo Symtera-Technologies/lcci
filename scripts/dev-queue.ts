@@ -76,6 +76,7 @@ function actorFor(userId: number): ActorContext {
     roleCode: null,
     roleCodes: [],
     permissions: new Set(),
+    departmentScopes: [],
     requestId: newUlid(),
     ipHash: null,
     userAgentHash: null,

@@ -10,10 +10,9 @@
  * entire backend is unreachable on a fresh database.
  *
  * It prints the generated password once and does not store it anywhere else.
- * It deliberately does **not** enrol two-factor: the account lands on
- * `/admin/setup-2fa` at first sign-in and can reach nothing until it enrols,
- * which is the gate working as designed and is also the only way to exercise
- * that page.
+ * It does not enrol two-factor, and under the current design that is simply
+ * the default rather than a gate: the account signs in with its password
+ * alone and can turn two-factor on for itself at `/admin/security`.
  */
 
 import process from "node:process";
@@ -95,6 +94,10 @@ async function main(): Promise<number> {
         password_hash: hashPassword(password),
         status: "active",
         email_verified_at: new Date(),
+        // Explicit, because the column default is 'otp_email' — right for a
+        // member whose only credential is an emailed code, and meaningless
+        // for staff, who have a password and no emailed-code path at all.
+        mfa_mode: "none",
       })
       .executeTakeFirst();
     userId = Number(inserted.insertId ?? 0);
@@ -111,8 +114,8 @@ async function main(): Promise<number> {
   console.log(
     `Staff account #${userId} <${email}> as ${role}.\n` +
       `Password: ${password}\n` +
-      `Sign in at http://localhost:9000/admin/sign-in — you will be sent ` +
-      `straight to two-factor enrolment, which is the gate working correctly.`,
+      `Sign in at http://localhost:9000/admin/sign-in — the password alone is ` +
+      `enough. Two-factor is off by default; turn it on at /admin/security.`,
   );
   return 0;
 }

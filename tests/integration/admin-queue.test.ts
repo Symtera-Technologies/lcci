@@ -59,6 +59,7 @@ function staffActor(
     roleCode,
     roleCodes: [roleCode],
     permissions: new Set(permissions),
+    departmentScopes: [],
     requestId: newUlid(),
     ipHash: "c".repeat(64),
     userAgentHash: "d".repeat(64),

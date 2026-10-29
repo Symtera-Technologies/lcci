@@ -150,6 +150,7 @@ function anonymousActor(
     roleCode: null,
     roleCodes: [],
     permissions: new Set<PermissionCode>(),
+    departmentScopes: [],
     requestId,
     ipHash: hashIp(ip),
     userAgentHash: hashUserAgent(userAgent),

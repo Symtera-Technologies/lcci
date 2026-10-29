@@ -12,7 +12,13 @@ import {
   sealTotpSecret,
   totpCode,
 } from "@/server/auth/totp";
-import { enrolTotp, signInWithPassword, verifySecondFactor } from "@/server/auth/staff";
+import {
+  disableTotp,
+  enrolTotp,
+  signInWithPassword,
+  twoFactorStatus,
+  verifySecondFactor,
+} from "@/server/auth/staff";
 import { hashPassword } from "@/server/crypto";
 import { reset as resetLimit } from "@/server/rate-limit";
 import {
@@ -62,7 +68,10 @@ async function makeStaff(email: string): Promise<number> {
   const userId = await createUser(email);
   await getDb()
     .updateTable("users")
-    .set({ password_hash: hashPassword(PASSWORD) })
+    // `mfa_mode` explicitly, because the column default is 'otp_email' —
+    // right for a member whose only credential is an emailed code, and
+    // meaningless for staff. A fresh staff account has two-factor off.
+    .set({ password_hash: hashPassword(PASSWORD), mfa_mode: "none" })
     .where("id", "=", userId)
     .execute();
   await freshLimits(email);
@@ -269,7 +278,7 @@ describe.skipIf(!available)("the password step", () => {
     await resetTables(TABLES);
   });
 
-  it("accepts the right password and says whether 2FA is already enrolled", async () => {
+  it("accepts the right password and says whether two-factor is on", async () => {
     const userId = await makeStaff("officer@lcci.test");
 
     const first = await signInWithPassword({
@@ -278,7 +287,7 @@ describe.skipIf(!available)("the password step", () => {
       ...request(),
     });
     expect(first.ok).toBe(true);
-    if (first.ok) expect(first.user.hasTotp).toBe(false);
+    if (first.ok) expect(first.user.twoFactorEnabled).toBe(false);
 
     const { secret, base32 } = newTotpSecret();
     await enrolTotp({
@@ -294,7 +303,7 @@ describe.skipIf(!available)("the password step", () => {
       ...request(),
     });
     expect(second.ok).toBe(true);
-    if (second.ok) expect(second.user.hasTotp).toBe(true);
+    if (second.ok) expect(second.user.twoFactorEnabled).toBe(true);
   });
 
   it("refuses the wrong password, and an address with no account, identically", async () => {
@@ -349,5 +358,181 @@ describe.skipIf(!available)("the password step", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("locked");
+  });
+});
+
+/**
+ * Two-factor as the account holder's own setting, off by default.
+ *
+ * The behaviour that actually matters is the pair of transitions, and both
+ * need a real database: turning it off has to take the secret *and* the unused
+ * recovery codes in one transaction, or a "disabled" account still has a phone
+ * generating codes this system would accept the moment the mode flipped back.
+ */
+describe.skipIf(!available)("two-factor as a setting", () => {
+  beforeEach(async () => {
+    await resetTables(TABLES);
+  });
+
+  async function enable(userId: number): Promise<void> {
+    const { secret, base32 } = newTotpSecret();
+    const result = await enrolTotp({
+      userId,
+      secretBase32: base32,
+      code: totpCode(secret, currentStep()),
+      ...request(),
+    });
+    expect(result.ok).toBe(true);
+  }
+
+  it("is off for a new staff account", async () => {
+    const userId = await makeStaff("officer@lcci.test");
+    expect(await twoFactorStatus(userId)).toEqual({
+      enabled: false,
+      required: false,
+      requiredBy: null,
+      requiredAt: null,
+      recoveryRemaining: 0,
+    });
+  });
+
+  it("is on, with ten recovery codes, once enrolled", async () => {
+    const userId = await makeStaff("officer@lcci.test");
+    await enable(userId);
+
+    expect(await twoFactorStatus(userId)).toMatchObject({
+      enabled: true,
+      required: false,
+      recoveryRemaining: 10,
+    });
+  });
+
+  it("refuses to turn off without the right password, and stays on", async () => {
+    const userId = await makeStaff("officer@lcci.test");
+    await enable(userId);
+
+    const result = await disableTotp({
+      userId,
+      password: "not the password",
+      ...request(),
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("wrong-password");
+    // The whole point: a refused confirmation must leave the factor in place.
+    expect((await twoFactorStatus(userId)).enabled).toBe(true);
+  });
+
+  it("clears the secret and every unused recovery code when turned off", async () => {
+    const userId = await makeStaff("officer@lcci.test");
+    await enable(userId);
+
+    const result = await disableTotp({ userId, password: PASSWORD, ...request() });
+    expect(result.ok).toBe(true);
+
+    const row = await getDb()
+      .selectFrom("users")
+      .select(["totp_secret_enc", "mfa_mode"])
+      .where("id", "=", userId)
+      .executeTakeFirstOrThrow();
+
+    expect(row.totp_secret_enc).toBeNull();
+    expect(row.mfa_mode).toBe("none");
+    expect(await countRecoveryCodes(userId)).toBe(0);
+  });
+
+  it("will not take a code generated from the secret it just discarded", async () => {
+    const userId = await makeStaff("officer@lcci.test");
+
+    // Enrol by hand, so the test holds the secret the old phone would still
+    // be generating from after two-factor is turned off.
+    const { secret, base32 } = newTotpSecret();
+    await enrolTotp({
+      userId,
+      secretBase32: base32,
+      code: totpCode(secret, currentStep()),
+      ...request(),
+    });
+    await disableTotp({ userId, password: PASSWORD, ...request() });
+    await freshLimits("officer@lcci.test");
+
+    const result = await verifySecondFactor({
+      userId,
+      // A correct code, from the right secret, in the current window. It must
+      // still be refused: nothing is outstanding to satisfy.
+      code: totpCode(secret, currentStep() + 1),
+      ...request(),
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("not-enrolled");
+  });
+
+  it("signs in on the password alone once two-factor is off again", async () => {
+    const userId = await makeStaff("officer@lcci.test");
+    await enable(userId);
+    await disableTotp({ userId, password: PASSWORD, ...request() });
+    await freshLimits("officer@lcci.test");
+
+    const result = await signInWithPassword({
+      email: "officer@lcci.test",
+      password: PASSWORD,
+      ...request(),
+    });
+
+    expect(result.ok).toBe(true);
+    // False here is what tells `passwordAction` to create a session that is
+    // already trusted, which is the one decision the whole change turns on.
+    if (result.ok) expect(result.user.twoFactorEnabled).toBe(false);
+  });
+
+  it("turning it on again issues a fresh set of ten codes", async () => {
+    const userId = await makeStaff("officer@lcci.test");
+    await enable(userId);
+    await disableTotp({ userId, password: PASSWORD, ...request() });
+    await enable(userId);
+
+    expect(await twoFactorStatus(userId)).toMatchObject({
+      enabled: true,
+      recoveryRemaining: 10,
+    });
+  });
+
+  it("says nothing to turn off when it is already off", async () => {
+    const userId = await makeStaff("officer@lcci.test");
+
+    const result = await disableTotp({ userId, password: PASSWORD, ...request() });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("not-enabled");
+  });
+
+  /**
+   * A row with a secret but `mfa_mode` not 'totp' is treated as off.
+   *
+   * Reachable only by a hand-edit in phpMyAdmin, which is exactly why it is
+   * pinned: the opposite reading would demand a code at the door from an
+   * account whose holder believes two-factor is off, and lock them out of
+   * their own account with no way to say so.
+   */
+  it("treats a half-set row as off rather than locking the holder out", async () => {
+    const userId = await makeStaff("officer@lcci.test");
+    const { secret } = newTotpSecret();
+
+    await getDb()
+      .updateTable("users")
+      .set({ totp_secret_enc: sealTotpSecret(userId, secret), mfa_mode: "none" })
+      .where("id", "=", userId)
+      .execute();
+
+    expect((await twoFactorStatus(userId)).enabled).toBe(false);
+
+    const result = await signInWithPassword({
+      email: "officer@lcci.test",
+      password: PASSWORD,
+      ...request(),
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.user.twoFactorEnabled).toBe(false);
   });
 });

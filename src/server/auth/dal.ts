@@ -101,7 +101,12 @@ export const getActor = cache(async (): Promise<ActorContext | null> => {
   const grants = await getDb()
     .selectFrom("user_roles")
     .innerJoin("role_permissions", "role_permissions.role_code", "user_roles.role_code")
-    .select(["user_roles.role_code", "role_permissions.permission_code"])
+    .select([
+      "user_roles.role_code",
+      "user_roles.scope_kind",
+      "user_roles.scope_value",
+      "role_permissions.permission_code",
+    ])
     .where("user_roles.user_id", "=", session.user.id)
     .execute();
 
@@ -109,6 +114,21 @@ export const getActor = cache(async (): Promise<ActorContext | null> => {
   const permissions = new Set(
     grants.map((g) => g.permission_code as PermissionCode),
   );
+  /**
+   * The department scopes, from the same rows.
+   *
+   * One join already fetches them, so this costs no query. Deduplicated
+   * because the join multiplies each role grant by that role's permissions —
+   * a `department_editor` scoped to `info` appears five times here, once per
+   * permission the role carries.
+   */
+  const departmentScopes = [
+    ...new Set(
+      grants
+        .filter((g) => g.scope_kind === "department" && g.scope_value !== null)
+        .map((g) => g.scope_value as string),
+    ),
+  ];
 
   return {
     userId: session.user.id,
@@ -120,6 +140,7 @@ export const getActor = cache(async (): Promise<ActorContext | null> => {
     roleCode: roleCodes.slice().sort()[0] ?? null,
     roleCodes,
     permissions,
+    departmentScopes,
     requestId,
     ipHash: hashIp(clientIp(headerList)),
     userAgentHash: hashUserAgent(headerList?.get("user-agent") ?? null),
@@ -200,17 +221,32 @@ export async function requireMember(): Promise<ActorContext> {
  * Options for the two staff guards.
  *
  * `allowBeforeMfa` is held by exactly two routes — the sign-in page, which has
- * to render its own second step, and the enrolment page, which an account with
- * no authenticator must be able to reach. Everything else is refused until
- * `sessions.mfa_satisfied_at` is set, which is what makes enrolment a gate
- * rather than a suggestion. The flag is declared per route in `ROUTE_POLICY`
- * as well, so the two cannot drift without the inventory test noticing.
+ * to render its own second step, and the enrolment page, which an account an
+ * administrator has *required* two-factor on must be able to reach before it
+ * has anything to present. Everything else is refused while
+ * `sessions.mfa_satisfied_at` is NULL. The flag is declared per route in
+ * `ROUTE_POLICY` as well, so the two cannot drift without the inventory test
+ * noticing.
+ *
+ * Two-factor is off by default and the account holder's own setting, so for
+ * most accounts neither exemption is ever reached: their session is created
+ * already satisfied. The exemptions exist for the two accounts that owe
+ * something — a code, or an enrolment somebody else insisted on.
  */
 export interface StaffGuardOptions {
   allowBeforeMfa?: boolean;
 }
 
-/** Thrown when a staff session exists but the second factor is outstanding. */
+/**
+ * Thrown when a staff session exists but the second factor is outstanding.
+ *
+ * Two sub-cases, and they are not interchangeable. An account with two-factor
+ * on owes a **code**, and belongs at the sign-in page, which reads the pending
+ * step off the session. An account an administrator has **required** it on and
+ * which has not enrolled owes an **enrolment**, and belongs at the setup page
+ * — sending it to the code form would offer it a box it cannot fill, with no
+ * way out but signing out again.
+ */
 export class MfaRequiredError extends Error {
   /** True when there is no authenticator to present yet, only one to enrol. */
   readonly needsEnrolment: boolean;
@@ -218,7 +254,7 @@ export class MfaRequiredError extends Error {
   constructor(needsEnrolment: boolean) {
     super(
       needsEnrolment
-        ? "Enrol an authenticator app to continue."
+        ? "Two-factor sign-in is required on this account. Set up an authenticator app to continue."
         : "Enter the code from your authenticator app to continue.",
     );
     this.name = "MfaRequiredError";
@@ -241,7 +277,7 @@ export async function requireStaff(
     // loaded rather than another query against a three-connection pool.
     const session = await getSession();
     if (session && session.session.mfaSatisfiedAt === null) {
-      throw new MfaRequiredError(session.user.mfaMode !== "totp");
+      throw new MfaRequiredError(!session.user.twoFactorEnabled);
     }
   }
 
@@ -278,7 +314,7 @@ export async function requireStaffAll(
   if (!options?.allowBeforeMfa) {
     const session = await getSession();
     if (session && session.session.mfaSatisfiedAt === null) {
-      throw new MfaRequiredError(session.user.mfaMode !== "totp");
+      throw new MfaRequiredError(!session.user.twoFactorEnabled);
     }
   }
 
@@ -308,8 +344,10 @@ export async function requireStaffAll(
  *
  * - **No session**: redirect to the staff sign-in page. There is something
  *   useful to do, so a 401 screen would be a dead end.
- * - **Second factor outstanding**: redirect to whichever step is next — the
- *   code form, or enrolment for an account that has no authenticator yet.
+ * - **Second factor outstanding**: redirect to whichever step is actually
+ *   next — the code form for an account that has an authenticator, or
+ *   enrolment for one an administrator has required two-factor on. Sending
+ *   the second case to the code form would be a dead end.
  * - **Signed in and still not allowed**: `forbidden()`, which renders the 403
  *   boundary. Never a redirect: sending someone to sign in when they are
  *   already signed in is the single most confusing thing an admin area can

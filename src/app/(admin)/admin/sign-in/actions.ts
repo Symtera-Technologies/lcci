@@ -9,13 +9,17 @@ import { signInWithPassword, verifySecondFactor } from "@/server/auth/staff";
 import { createSession, revokeCurrentSession, satisfyMfa } from "@/server/auth/session";
 
 /**
- * Staff sign-in, in two steps.
+ * Staff sign-in: a password, and a code only if this account asked for one.
  *
  * The step is never held in the client. After the password a real session
- * exists with `mfa_satisfied_at` NULL, so the page re-renders into the code
- * form from the session itself — which means a refresh, a second tab and the
- * back button all show the correct step, and there is no half-authenticated
- * state living anywhere but the sessions table.
+ * exists, with `mfa_satisfied_at` NULL when a code is still owed, so the page
+ * re-renders into the code form from the session itself — which means a
+ * refresh, a second tab and the back button all show the correct step, and
+ * there is no half-authenticated state living anywhere but the sessions table.
+ *
+ * Two-factor is off by default and each staff member turns it on for
+ * themselves at `/admin/security`. `src/server/auth/staff.ts` carries the note
+ * on what that costs.
  */
 
 async function facts(): Promise<{
@@ -75,19 +79,30 @@ export const passwordAction = withAction(
       return fail("That email address and password do not match.");
     }
 
-    // The session is created here, before the second factor, and is useless
-    // until promoted: `requireStaff` refuses every route except this one and
-    // enrolment while `mfa_satisfied_at` is NULL.
+    // One decision, in one place. The session is trusted immediately only
+    // when the password was the whole credential — two-factor off and nobody
+    // requiring it. Everything downstream reads that off `mfa_satisfied_at`
+    // rather than re-deriving it.
+    const owesSomething =
+      result.user.twoFactorEnabled || result.user.twoFactorRequired;
+
     await createSession({
       userId: result.user.id,
       userType: "staff",
       roleVersion: result.user.roleVersion,
       ip: request.ip,
       userAgent: request.userAgent,
-      mfaSatisfied: false,
+      mfaSatisfied: !owesSomething,
     });
 
-    redirect(result.user.hasTotp ? "/admin/sign-in" : "/admin/setup-2fa");
+    // Three destinations, because there are three states. An account with an
+    // authenticator comes back here for the code. An account an administrator
+    // has required two-factor on, with nothing enrolled, goes to set one up
+    // and can reach nothing else until it has. Everyone else goes straight in:
+    // two-factor is their own setting at `/admin/security`, and a sign-in that
+    // detours into a security lecture is a sign-in people learn to click past.
+    if (result.user.twoFactorEnabled) redirect("/admin/sign-in");
+    redirect(result.user.twoFactorRequired ? "/admin/setup-2fa" : "/admin");
   },
 );
 
@@ -136,7 +151,13 @@ export const secondFactorAction = withAction(
         );
       }
       if (result.reason === "not-enrolled") {
-        redirect("/admin/setup-2fa");
+        // Two-factor was turned off from another device between the password
+        // and this code. Nothing is wrong and nothing needs enrolling — the
+        // password alone is now the whole credential, so start again.
+        return fail(
+          "Two-factor sign-in has been turned off for this account. " +
+            "Sign in again with your password alone.",
+        );
       }
       if (result.reason === "replayed") {
         return fail(

@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { fail, ok, withAction } from "@/server/action";
 import { clientIp, getRequestId, getSession } from "@/server/auth/dal";
@@ -10,9 +11,18 @@ import { satisfyMfa } from "@/server/auth/session";
 /**
  * Confirm an authenticator app.
  *
- * `allowBeforeMfa`, because this is the one page an account with no second
- * factor is allowed to reach, and the action it submits has to be reachable
- * from it. Every other staff action stays blocked until the factor exists.
+ * It carries `allowBeforeMfa`, and then refuses most of what that admits. The
+ * exemption exists for one case: an account an administrator has required
+ * two-factor on has a session that owes a second factor and no authenticator
+ * to produce one with, so without the exemption it could never confirm the
+ * enrolment that is the only thing standing between it and the backend.
+ *
+ * An account that owes a *code* is turned away here, in the handler. The
+ * wrapper's exemption is all-or-nothing and the distinction is not, and this
+ * is the control — the page's matching check only spares the holder a form
+ * that would refuse them. Without it, a stolen password alone would be enough
+ * to pair a new authenticator over the real holder's and own the second
+ * factor.
  *
  * It does **not** redirect on success. The ten recovery codes are shown once
  * and are stored as scrypt digests, so there is no way to display them again —
@@ -54,6 +64,13 @@ export const enrolAction = withAction(
 
     if (!actor?.userId || !session) return fail("Your session has ended. Sign in again.");
 
+    if (session.session.mfaSatisfiedAt === null && session.user.twoFactorEnabled) {
+      return fail(
+        "Enter the code from your current authenticator app first. You can " +
+          "pair a different app once you are signed in.",
+      );
+    }
+
     const result = await enrolTotp({
       userId: actor.userId,
       secretBase32: input.secret,
@@ -72,11 +89,20 @@ export const enrolAction = withAction(
       );
     }
 
-    // First enrolment promotes the session in place, so somebody who has just
-    // proved they hold the factor is not thrown back to the sign-in form at
-    // the moment they succeed. A *re*-enrolment has already revoked every
-    // session inside `enrolTotp`, and this then finds nothing to promote.
+    // Load-bearing for exactly one case, and a no-op for every other. Turning
+    // two-factor on by choice happens inside an already-trusted session, and
+    // `satisfyMfa` is guarded on `mfa_satisfied_at IS NULL`, so it finds
+    // nothing to promote. The case that needs it is the account an
+    // administrator required two-factor on: its session has owed a second
+    // factor since the password, and having just produced a code from the
+    // secret it paired a moment ago is that factor. Without this the holder
+    // would confirm enrolment and be bounced straight back here.
     await satisfyMfa(session.session.id);
+
+    // So that `/admin/security` reads "On" the moment the holder follows the
+    // link out of the recovery-codes screen, rather than serving them the
+    // render it had before they enrolled.
+    revalidatePath("/admin/security");
 
     return ok("Authenticator enrolled.", {
       recoveryCodes: result.recoveryCodes.join("\n"),

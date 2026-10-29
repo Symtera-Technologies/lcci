@@ -85,6 +85,7 @@ function staffActor(
     roleCode: "super_admin",
     roleCodes: ["super_admin"],
     permissions: new Set(permissions),
+    departmentScopes: [],
     requestId: newUlid(),
     ipHash: "a".repeat(64),
     userAgentHash: "b".repeat(64),

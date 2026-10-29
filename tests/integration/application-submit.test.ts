@@ -77,6 +77,7 @@ function portalActor(userId: number): ActorContext {
     roleCode: null,
     roleCodes: [],
     permissions: new Set(),
+    departmentScopes: [],
     requestId: newUlid(),
     ipHash: "a".repeat(64),
     userAgentHash: "b".repeat(64),

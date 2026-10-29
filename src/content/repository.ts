@@ -1,19 +1,56 @@
 /**
  * Content repository — the single seam between the site and its CMS.
  *
- * Every function here is async and returns plain domain objects, so replacing
- * the in-memory fixtures with Directus/Strapi/WordPress calls is a change to
- * this file alone. No component imports a CMS client directly.
+ * Every function here is async and returns plain domain objects, and the public
+ * signatures are exactly what they were when this module returned fixtures:
+ * `getLatestPressReleases(limit = 4)`, `getActiveNotice(now = new Date())` and
+ * the rest. Not one of the seventeen components that read them was touched when
+ * migration 0016 gave the content types tables of their own. That is what the
+ * seam is for.
  *
- * Fixture copy is drawn from genuine LCCI newsroom items (Oct 2026), with the
- * legacy typos corrected the way the migration will correct them.
+ * What changed is inside. The fixtures became SQL, and the business rules that
+ * were JavaScript `filter`s became `WHERE` clauses — which matters beyond
+ * tidiness, because a filter can only exclude rows the query already fetched.
+ * `status` and `ownerDepartment` have been declared in `types.ts` since the
+ * first commit and read by nothing; here they finally decide what a visitor
+ * sees.
+ *
+ * **The live predicate, on every list read.** A row is public when it is
+ * `published`, its `published_at` has passed, and its `scheduled_unpublish_at`
+ * has not. All three in SQL, in one helper, so scheduled publishing needs no
+ * cron for *correctness* — the row simply starts and stops matching. See
+ * `liveItems`.
+ *
+ * **No caching layer here, deliberately.** This module reads rows; deciding
+ * how long a rendered page may hold them is the rendering layer's job, and the
+ * site's public pages are statically prerendered today, so a cache inside the
+ * repository would be a second, invisible staleness on top of the page's own.
+ * It would also drag `next/cache` into a module the seed script and the
+ * integration tests call outside any request. When B4 attaches revalidation it
+ * attaches it to the pages and to a tag, not to this file.
+ *
+ * **No fixture fallback.** An unreachable database or an empty table shows
+ * empty sections, which is the honest result and the one somebody notices. A
+ * silent fallback would make a broken connection look exactly like a working
+ * site, in production, until somebody thought to read the newsroom.
+ *
+ * Preview — reading drafts — is not here. It needs an actor and a permission,
+ * and every public page imports this module, so putting authorisation behind
+ * this seam would pull the auth DAL into the homepage's dependency graph for
+ * the sake of a screen only staff can reach. It lives in `./preview`, which
+ * takes an explicit `ActorContext`, for the same reason membership does not go
+ * behind this seam at all.
  */
+
+import { getDb } from "@/db/client";
+import type { ContentKind } from "@/db/schema";
 
 import type {
   Committee,
   EconomicIndicator,
   EventItem,
   GalleryAlbum,
+  GalleryImage,
   ImageRef,
   KeyFigure,
   Notice,
@@ -22,603 +59,631 @@ import type {
   PressRelease,
   ServiceTile,
   Testimonial,
+  TopicSlug,
   VideoItem,
 } from "./types";
 
-const DEPT = {
-  info: "Information Department",
-  research: "Research Department",
-  secretariat: "Secretariat",
-} as const;
+/* -------------------------------------------------------------------------- */
+/* The live predicate                                                         */
+/* -------------------------------------------------------------------------- */
 
-function base(
-  id: string,
-  slug: string,
-  titleEn: string,
-  publishedAt: string,
-  ownerDepartment: string,
-) {
+/**
+ * Rows a visitor is allowed to see, for one content type.
+ *
+ * Three conditions, and the second two are the reason `published_at` and
+ * `scheduled_unpublish_at` are instants rather than flags somebody has to
+ * remember to set:
+ *
+ *   - `status = 'published'` excludes drafts, items in review, and archived
+ *     ones. Archived rows stay in the table with their slugs for ever — around
+ *     890 legacy press URLs are being redirected into this space and archiving
+ *     must not manufacture 404s — so they are excluded from lists and from the
+ *     sitemap, and resolve at their own URL with `noindex` when the detail
+ *     routes land.
+ *   - `published_at <= now` makes a future date a scheduled publish. A row
+ *     that has never been published has NULL here, and NULL fails the
+ *     comparison: the absence of a publication date is not a publication date
+ *     of zero.
+ *   - `scheduled_unpublish_at` in the future, or absent, is the other half.
+ *
+ * `now` is passed in rather than taken from `UTC_TIMESTAMP(3)` so that the two
+ * getters whose signatures promise the caller a clock —`getActiveNotice` and
+ * `getUpcomingEvents` — use the same one for the window as for their own
+ * filtering. One clock per call, and a test can move it.
+ */
+function liveItems(type: ContentKind, now: Date) {
+  return getDb()
+    .selectFrom("content_items as ci")
+    .where("ci.content_type", "=", type)
+    .where("ci.status", "=", "published")
+    .where("ci.published_at", "<=", now)
+    .where((eb) =>
+      eb.or([
+        eb("ci.scheduled_unpublish_at", "is", null),
+        eb("ci.scheduled_unpublish_at", ">", now),
+      ]),
+    );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Mappers                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The `BaseContent` half of a row.
+ *
+ * `id` is the primary key rendered as a string, because the public types say
+ * `id: string` and every caller uses it as a React key. The fixtures' `"pr-1"`
+ * style ids are gone; what is stable and externally meaningful is the slug,
+ * which is what the URLs are built from.
+ *
+ * `publishedAt` is asserted non-null rather than defaulted. Every row reaching
+ * a mapper has come through `liveItems`, which requires `published_at <= now`,
+ * so a null here would mean the predicate had been bypassed — and quietly
+ * substituting the epoch or the current time would hide that rather than
+ * report it.
+ */
+function baseOf(row: {
+  id: number;
+  slug: string;
+  title_en: string;
+  title_ur: string | null;
+  status: string;
+  published_at: Date | null;
+  updated_at: Date;
+  department_name: string;
+  seo_title: string | null;
+  seo_description: string | null;
+}) {
+  if (row.published_at === null) {
+    throw new Error(`content item ${row.id} is live with no published_at`);
+  }
+
   return {
-    id,
-    slug,
-    titleEn,
-    status: "published" as const,
-    publishedAt,
-    updatedAt: publishedAt,
-    ownerDepartment,
+    id: String(row.id),
+    slug: row.slug,
+    titleEn: row.title_en,
+    ...(row.title_ur ? { titleUr: row.title_ur } : {}),
+    status: row.status as "draft" | "in_review" | "published" | "archived",
+    publishedAt: row.published_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+    ownerDepartment: row.department_name,
+    ...(row.seo_title ? { seoTitle: row.seo_title } : {}),
+    ...(row.seo_description ? { seoDescription: row.seo_description } : {}),
+  };
+}
+
+/**
+ * An `ImageRef` from a left-joined `media_assets` row.
+ *
+ * `src` being null means the join found nothing, which for a nullable image
+ * column is the normal case. `alt_en` is NOT NULL in the schema, so an image
+ * that exists always has a description — the `?? ""` is unreachable and is
+ * there only because the column types cannot say so.
+ */
+function imageOf(row: {
+  src: string | null;
+  alt_en: string | null;
+  alt_ur: string | null;
+  width: number | null;
+  height: number | null;
+  caption: string | null;
+}): ImageRef | undefined {
+  if (row.src === null) return undefined;
+  return {
+    src: row.src,
+    altEn: row.alt_en ?? "",
+    ...(row.alt_ur ? { altUr: row.alt_ur } : {}),
+    width: row.width ?? 0,
+    height: row.height ?? 0,
+    ...(row.caption ? { caption: row.caption } : {}),
+  };
+}
+
+/**
+ * Topics for a set of items, in one query.
+ *
+ * A second round trip rather than `GROUP_CONCAT`, which has a configurable
+ * length limit that truncates silently at 1024 bytes by default — a tag list
+ * is short enough today and would be the kind of thing that breaks on the
+ * press release somebody files under five topics.
+ */
+async function topicsFor(itemIds: readonly number[]): Promise<Map<number, TopicSlug[]>> {
+  const byItem = new Map<number, TopicSlug[]>();
+  if (itemIds.length === 0) return byItem;
+
+  const rows = await getDb()
+    .selectFrom("content_item_topics")
+    .select(["content_item_id", "topic_slug"])
+    .where("content_item_id", "in", itemIds)
+    .orderBy("sort_order")
+    .execute();
+
+  for (const row of rows) {
+    const list = byItem.get(row.content_item_id) ?? [];
+    list.push(row.topic_slug as TopicSlug);
+    byItem.set(row.content_item_id, list);
+  }
+  return byItem;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Notices                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The single live notice, or null.
+ *
+ * Expiry is enforced here, not by an editor remembering to take a notice down:
+ * the window is two columns and the query compares against them. Spec section
+ * 5 allows at most one notice on screen at a time and urgent outranks info,
+ * which was a JavaScript sort and is now `ORDER BY level` — `ENUM('info',
+ * 'urgent')` sorts by declaration order, so `level DESC` puts urgent first.
+ * Spelt out because it is the one ordering in this file that depends on the
+ * ENUM's declaration order rather than on its values.
+ */
+export async function getActiveNotice(now = new Date()): Promise<Notice | null> {
+  const row = await liveItems("notice", now)
+    .innerJoin("content_notices as n", "n.content_item_id", "ci.id")
+    .select([
+      "ci.id",
+      "n.message_en",
+      "n.message_ur",
+      "n.href",
+      "n.level",
+      "n.starts_at",
+      "n.ends_at",
+    ])
+    .where("n.starts_at", "<=", now)
+    .where("n.ends_at", ">=", now)
+    .orderBy("n.level", "desc")
+    .orderBy("ci.sort_order")
+    .limit(1)
+    .executeTakeFirst();
+
+  if (!row) return null;
+
+  return {
+    id: String(row.id),
+    messageEn: row.message_en,
+    ...(row.message_ur ? { messageUr: row.message_ur } : {}),
+    ...(row.href ? { href: row.href } : {}),
+    level: row.level,
+    startAt: row.starts_at.toISOString(),
+    endAt: row.ends_at.toISOString(),
   };
 }
 
 /* -------------------------------------------------------------------------- */
-/* Notices                                                                     */
+/* Newsroom                                                                   */
 /* -------------------------------------------------------------------------- */
 
-const NOTICES: Notice[] = [
-  {
-    id: "n-fraud-2026",
-    messageEn:
-      "Beware of fraudulent calls and websites offering LCCI services. The chamber never asks for payment into personal accounts.",
-    href: "/about/contact#fraud",
-    level: "urgent",
-    startAt: "2026-09-01T00:00:00+05:00",
-    endAt: "2026-12-31T23:59:59+05:00",
-  },
-  {
-    // Expired on purpose: proves the strip filters rather than trusting editors.
-    id: "n-agm-2026",
-    messageEn: "Annual General Meeting — 30 September 2026, Auditorium, LCCI.",
-    href: "/trade/events",
-    level: "info",
-    startAt: "2026-09-10T00:00:00+05:00",
-    endAt: "2026-09-30T23:59:59+05:00",
-  },
-];
+export async function getLatestPressReleases(limit = 4): Promise<PressRelease[]> {
+  const now = new Date();
+
+  const rows = await liveItems("press_release", now)
+    .innerJoin("content_press_releases as pr", "pr.content_item_id", "ci.id")
+    .innerJoin("departments as d", "d.code", "ci.department_code")
+    .leftJoin("media_assets as hero", "hero.id", "pr.hero_image_id")
+    .select([
+      "ci.id",
+      "ci.slug",
+      "ci.title_en",
+      "ci.title_ur",
+      "ci.status",
+      "ci.published_at",
+      "ci.updated_at",
+      "ci.seo_title",
+      "ci.seo_description",
+      "d.name_en as department_name",
+      "pr.summary",
+      "pr.spokesperson",
+      "hero.src",
+      "hero.alt_en",
+      "hero.alt_ur",
+      "hero.width",
+      "hero.height",
+      "hero.caption",
+    ])
+    .orderBy("ci.published_at", "desc")
+    .limit(limit)
+    .execute();
+
+  const topics = await topicsFor(rows.map((row) => row.id));
+
+  return rows.map((row) => {
+    const heroImage = imageOf(row);
+    return {
+      ...baseOf(row),
+      summary: row.summary,
+      ...(heroImage ? { heroImage } : {}),
+      topics: topics.get(row.id) ?? [],
+      ...(row.spokesperson ? { spokesperson: row.spokesperson } : {}),
+    };
+  });
+}
 
 /* -------------------------------------------------------------------------- */
-/* Newsroom                                                                    */
+/* Events                                                                     */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Photography for the newsroom.
+ * Events still to come.
  *
- * These are genuine chamber photographs, but they are not photographs *of these
- * particular stories*: the legacy site published no press photography at all —
- * every press.php page is text — so there is nothing to migrate and nothing to
- * match story to picture with.
- *
- * The alt text therefore describes the photograph rather than the headline
- * beside it. That keeps it true for a screen reader whichever story it is
- * attached to, which a caption written to the headline would not be. No
- * individual is named: the source files carried no usable alt text, so who
- * appears in them is unverified by the chamber. See README "Known gaps".
+ * `starts_at >= now` was a `filter` over every event in memory; as a `WHERE`
+ * against `idx_event_start` it reads only the rows it returns, which is the
+ * difference that matters once the chamber's 180 events a year have
+ * accumulated for a decade.
  */
-const PRESS_PHOTO: Record<string, ImageRef> = {
-  "pr-1": {
-    src: "/photos/hero-5.jpg",
-    altEn:
-      "A large delegation photographed together on the red carpet outside the Lahore Chamber building.",
-    width: 857,
-    height: 577,
-  },
-  "pr-2": {
-    src: "/photos/hero-1.jpg",
-    altEn:
-      "Chamber representatives in discussion with a senior government official at a formal meeting.",
-    width: 864,
-    height: 563,
-  },
-  "pr-3": {
-    src: "/photos/hero-4.jpg",
-    altEn:
-      "Three chamber office-bearers photographed together on the steps of a reception venue.",
-    width: 857,
-    height: 577,
-  },
-  "pr-4": {
-    src: "/photos/hero-2.jpg",
-    altEn:
-      "A chamber office-bearer shaking hands with a visiting government dignitary at an LCCI reception.",
-    width: 857,
-    height: 567,
-  },
-  "pr-5": {
-    src: "/photos/hero-3.jpg",
-    altEn:
-      "Chamber representatives greeting a visiting dignitary on the grounds outside a reception venue.",
-    width: 857,
-    height: 577,
-  },
-  "pr-6": {
-    src: "/photos/hero-6.jpg",
-    altEn:
-      "Members and office-bearers of the Lahore Chamber gathered on the steps of the chamber building beneath its nameplate.",
-    width: 857,
-    height: 577,
-  },
-};
-
-const PRESS: PressRelease[] = [
-  {
-    ...base(
-      "pr-1",
-      "road-infrastructure-self-generated-resources",
-      "Government improving road infrastructure through self-generated resources",
-      "2026-10-26T10:00:00+05:00",
-      DEPT.info,
-    ),
-    summary:
-      "Federal Minister for Communications Abdul Aleem Khan told the Lahore Chamber that the government is upgrading road infrastructure nationwide without adding to the debt burden, and invited the private sector to co-invest.",
-    heroImage: PRESS_PHOTO["pr-1"],
-    topics: ["infrastructure", "exports-trade"],
-    spokesperson: "Abdul Aleem Khan, Federal Minister for Communications",
-  },
-  {
-    ...base(
-      "pr-2",
-      "lcci-chief-meets-ccpo-lahore",
-      "LCCI President meets CCPO Lahore on business security",
-      "2026-10-21T10:00:00+05:00",
-      DEPT.info,
-    ),
-    summary:
-      "Capital City Police Officer Bilal Siddique Kamyana committed to a peaceful, secure and business-friendly environment, and to resolving traders' complaints through a dedicated desk.",
-    heroImage: PRESS_PHOTO["pr-2"],
-    topics: ["law-order"],
-    spokesperson: "Bilal Siddique Kamyana, CCPO Lahore",
-  },
-  {
-    ...base(
-      "pr-3",
-      "lcci-to-jointly-promote-creative-economy",
-      "LCCI to jointly promote Pakistan's creative economy",
-      "2026-10-20T10:00:00+05:00",
-      DEPT.info,
-    ),
-    // Legacy site spelled this "Ministery" — corrected in migration.
-    summary:
-      "The Ministry for National Heritage & Culture and the Lahore Chamber will work together to promote Pakistan's creative economy, preserve cultural assets and open export routes for creative industries.",
-    heroImage: PRESS_PHOTO["pr-3"],
-    topics: ["exports-trade", "smes"],
-  },
-  {
-    ...base(
-      "pr-4",
-      "speaker-punjab-assembly-assures-lcci-of-support",
-      "Speaker Punjab Assembly assures LCCI of support",
-      "2026-10-17T10:00:00+05:00",
-      DEPT.info,
-    ),
-    summary:
-      "Speaker Malik Muhammad Ahmad Khan assured the chamber that its concerns on regulatory enforcement and taxation would be placed before the relevant committees.",
-    heroImage: PRESS_PHOTO["pr-4"],
-    topics: ["regulation", "taxation-budget"],
-  },
-  {
-    ...base(
-      "pr-5",
-      "lcci-lahore-district-administration-join-hands",
-      "LCCI and Lahore district administration join hands",
-      "2026-10-15T10:00:00+05:00",
-      DEPT.info,
-    ),
-    summary:
-      "The two sides agreed to strengthen collaboration to promote the district economy, facilitate investors and streamline approvals for small businesses.",
-    heroImage: PRESS_PHOTO["pr-5"],
-    topics: ["smes", "infrastructure"],
-  },
-  {
-    ...base(
-      "pr-6",
-      "export-led-growth-key-to-economic-development",
-      "Export-led growth key to economic development",
-      "2026-10-14T10:00:00+05:00",
-      DEPT.info,
-    ),
-    summary:
-      "Exports can only rise if industry is given a conducive business environment, competitive energy tariffs and predictable tax policy, the chamber's leadership said.",
-    heroImage: PRESS_PHOTO["pr-6"],
-    topics: ["exports-trade", "energy", "taxation-budget"],
-  },
-];
-
-/* -------------------------------------------------------------------------- */
-/* Events                                                                      */
-/* -------------------------------------------------------------------------- */
-
-const EVENTS: EventItem[] = [
-  {
-    ...base(
-      "ev-1",
-      "export-documentation-workshop",
-      "Export documentation workshop",
-      "2026-10-20T09:00:00+05:00",
-      DEPT.secretariat,
-    ),
-    type: "training",
-    start: "2026-11-06T09:30:00+05:00",
-    end: "2026-11-06T13:00:00+05:00",
-    venue: "LCCI Auditorium, Shahrah-e-Aiwan-e-Tijarat",
-    fee: "Free for members",
-    capacity: 120,
-    registrationOpen: true,
-    registrationDeadline: "2026-11-04T17:00:00+05:00",
-  },
-  {
-    ...base(
-      "ev-2",
-      "trade-delegation-central-asia",
-      "Trade delegation to Central Asia",
-      "2026-10-18T09:00:00+05:00",
-      DEPT.secretariat,
-    ),
-    type: "delegation",
-    start: "2026-11-18T08:00:00+05:00",
-    end: "2026-11-24T18:00:00+05:00",
-    venue: "Tashkent and Almaty",
-    fee: "PKR 185,000",
-    capacity: 30,
-    registrationOpen: true,
-    registrationDeadline: "2026-11-01T17:00:00+05:00",
-  },
-  {
-    ...base(
-      "ev-3",
-      "women-entrepreneurs-finance-clinic",
-      "Women entrepreneurs' access-to-finance clinic",
-      "2026-10-12T09:00:00+05:00",
-      DEPT.secretariat,
-    ),
-    type: "seminar",
-    start: "2026-11-27T10:00:00+05:00",
-    venue: "LCCI Committee Room 2",
-    fee: "Free",
-    capacity: 60,
-    registrationOpen: true,
-  },
-];
-
-/* -------------------------------------------------------------------------- */
-/* Advocacy                                                                    */
-/* -------------------------------------------------------------------------- */
-
-const POSITIONS: PolicyPosition[] = [
-  {
-    ...base(
-      "pp-1",
-      "budget-proposals-2027-28",
-      "Budget proposals 2027–28",
-      "2026-10-08T10:00:00+05:00",
-      DEPT.research,
-    ),
-    issue: "Compliance cost and the breadth of the tax base",
-    chamberAsk:
-      "Broaden the base rather than deepen rates on existing filers, and cut the number of separate returns a manufacturer files each year.",
-    positionStatus: "under_review",
-    topics: ["taxation-budget", "regulation"],
-  },
-  {
-    ...base(
-      "pp-2",
-      "industrial-power-tariff",
-      "Industrial power tariff relief",
-      "2026-09-30T10:00:00+05:00",
-      DEPT.research,
-    ),
-    issue: "Regional competitiveness of Punjab's industry",
-    chamberAsk:
-      "Align the industrial tariff with regional competitors and settle outstanding refunds on a published schedule.",
-    positionStatus: "raised",
-    topics: ["energy", "exports-trade"],
-  },
-];
-
-/* -------------------------------------------------------------------------- */
-/* Homepage furniture                                                          */
-/* -------------------------------------------------------------------------- */
-
-const KEY_FIGURES: KeyFigure[] = [
-  { id: "kf-1", value: 20, suffix: "k+", labelEn: "Member businesses", verifiedAt: "2026-10-01" },
-  { id: "kf-2", value: 103, labelEn: "Years since 1923", verifiedAt: "2026-10-01" },
-  { id: "kf-3", value: 180, suffix: "+", labelEn: "Events a year", verifiedAt: "2026-10-01" },
-  { id: "kf-4", value: 20, labelEn: "Sectors represented", verifiedAt: "2026-10-01" },
-];
-
-const INDICATORS: EconomicIndicator[] = [
-  { id: "ei-1", labelEn: "Exports (FY to date)", value: "$9.4bn", changePct: 6.2, goodWhen: "up", source: "PBS", updatedAt: "2026-10-22" },
-  { id: "ei-2", labelEn: "CPI inflation", value: "6.1%", changePct: -0.4, goodWhen: "down", source: "PBS", updatedAt: "2026-10-22" },
-  { id: "ei-3", labelEn: "Policy rate", value: "11.0%", changePct: -0.5, goodWhen: "down", source: "SBP", updatedAt: "2026-10-15" },
-  { id: "ei-4", labelEn: "KIBOR (6M)", value: "11.4%", changePct: -0.3, goodWhen: "down", source: "SBP", updatedAt: "2026-10-24" },
-  { id: "ei-5", labelEn: "PKR / USD", value: "281.4", changePct: 0.2, goodWhen: "neutral", source: "SBP", updatedAt: "2026-10-24" },
-];
-
-const SERVICES: ServiceTile[] = [
-  { id: "s-1", labelEn: "Renew membership", description: "Pay online and download your updated certificate.", href: "/membership/renew", icon: "renew" },
-  { id: "s-2", labelEn: "Certificate of origin", description: "Apply, track and download the signed copy.", href: "/services/certificates-of-origin", icon: "certificate" },
-  { id: "s-3", labelEn: "Attestation", description: "Get commercial documents attested by the chamber.", href: "/services/attestation", icon: "attestation" },
-  { id: "s-4", labelEn: "Circulars & SROs", description: "Every notification, dated and searchable.", href: "/news/circulars", icon: "circular" },
-  { id: "s-5", labelEn: "Member directory", description: "Find suppliers and buyers by sector.", href: "/membership/directory", icon: "directory" },
-];
-
-const COMMITTEES: Committee[] = [
-  { slug: "taxation", nameEn: "Taxation", mandate: "Federal and provincial tax policy, refunds and audit practice.", memberCount: 24 },
-  { slug: "energy", nameEn: "Energy", mandate: "Tariffs, load management and alternative energy for industry.", memberCount: 19 },
-  { slug: "exports", nameEn: "Exports & Trade", mandate: "Market access, trade agreements and export facilitation.", memberCount: 27 },
-  { slug: "women-entrepreneurs", nameEn: "Women Entrepreneurs", mandate: "Finance, market access and representation for women-led firms.", memberCount: 16 },
-  { slug: "it-digital", nameEn: "IT & Digital Economy", mandate: "Digital exports, payments and the AI skills pipeline.", memberCount: 21 },
-  { slug: "smes", nameEn: "SMEs", mandate: "Credit, registration burden and growth support for small firms.", memberCount: 23 },
-];
-
-const PARTNERS: Partner[] = [
-  { id: "p-1", name: "State Bank of Pakistan", tier: "strategic" },
-  { id: "p-2", name: "Trade Development Authority of Pakistan", tier: "strategic" },
-  { id: "p-3", name: "Punjab Board of Investment & Trade", tier: "gold" },
-  { id: "p-4", name: "SMEDA", tier: "gold" },
-  { id: "p-5", name: "Pakistan Single Window", tier: "silver" },
-  { id: "p-6", name: "NPO Pakistan", tier: "silver" },
-];
-
-const TESTIMONIALS: Testimonial[] = [
-  {
-    id: "t-1",
-    quote:
-      "The certificate of origin used to mean sending someone across the city. Doing it through the chamber's desk cut two days out of every shipment.",
-    authorName: "Farhan Qureshi",
-    authorRole: "Export Manager",
-    company: "Ravi Textiles (Pvt) Ltd",
-  },
-  {
-    id: "t-2",
-    quote:
-      "We joined for the directory listing. What we actually use is the circular alerts — we hear about an SRO before our accountants do.",
-    authorName: "Ayesha Siddiqui",
-    authorRole: "Managing Director",
-    company: "Sialkot Surgical Instruments",
-  },
-  {
-    id: "t-3",
-    quote:
-      "The delegation to Central Asia opened three accounts for us. That is the whole membership paid back in one trip.",
-    authorName: "Imran Bhatti",
-    authorRole: "Chief Executive",
-    company: "Bhatti Leather Works",
-  },
-];
-
-/* -------------------------------------------------------------------------- */
-/* Public API                                                                  */
-/* -------------------------------------------------------------------------- */
-
-/** Returns the single live notice, or null. Expiry is enforced here, not by an editor. */
-export async function getActiveNotice(now = new Date()): Promise<Notice | null> {
-  const live = NOTICES.filter(
-    (n) => new Date(n.startAt) <= now && new Date(n.endAt) >= now,
-  );
-  // Spec §5: at most one notice shows at a time. Urgent outranks info.
-  const rank = (n: Notice) => (n.level === "urgent" ? 0 : 1);
-  live.sort((a, b) => rank(a) - rank(b));
-  return live[0] ?? null;
-}
-
-export async function getLatestPressReleases(limit = 4): Promise<PressRelease[]> {
-  return [...PRESS]
-    .sort((a, b) => +new Date(b.publishedAt) - +new Date(a.publishedAt))
-    .slice(0, limit);
-}
-
 export async function getUpcomingEvents(limit = 3, now = new Date()): Promise<EventItem[]> {
-  return EVENTS.filter((e) => new Date(e.start) >= now)
-    .sort((a, b) => +new Date(a.start) - +new Date(b.start))
-    .slice(0, limit);
+  const rows = await liveItems("event", now)
+    .innerJoin("content_events as e", "e.content_item_id", "ci.id")
+    .innerJoin("departments as d", "d.code", "ci.department_code")
+    .select([
+      "ci.id",
+      "ci.slug",
+      "ci.title_en",
+      "ci.title_ur",
+      "ci.status",
+      "ci.published_at",
+      "ci.updated_at",
+      "ci.seo_title",
+      "ci.seo_description",
+      "d.name_en as department_name",
+      "e.event_type",
+      "e.starts_at",
+      "e.ends_at",
+      "e.venue",
+      "e.fee",
+      "e.capacity",
+      "e.registration_open",
+      "e.registration_deadline",
+    ])
+    .where("e.starts_at", ">=", now)
+    .orderBy("e.starts_at")
+    .limit(limit)
+    .execute();
+
+  return rows.map((row) => ({
+    ...baseOf(row),
+    type: row.event_type,
+    start: row.starts_at.toISOString(),
+    ...(row.ends_at ? { end: row.ends_at.toISOString() } : {}),
+    venue: row.venue,
+    ...(row.fee ? { fee: row.fee } : {}),
+    ...(row.capacity !== null ? { capacity: row.capacity } : {}),
+    // TINYINT(1) arrives as 0 or 1, not as a boolean.
+    registrationOpen: row.registration_open === 1,
+    ...(row.registration_deadline
+      ? { registrationDeadline: row.registration_deadline.toISOString() }
+      : {}),
+  }));
 }
+
+/* -------------------------------------------------------------------------- */
+/* Advocacy                                                                   */
+/* -------------------------------------------------------------------------- */
 
 export async function getAdvocacySpotlight(): Promise<PolicyPosition[]> {
-  return POSITIONS;
+  const now = new Date();
+
+  const rows = await liveItems("policy_position", now)
+    .innerJoin("content_policy_positions as p", "p.content_item_id", "ci.id")
+    .innerJoin("departments as d", "d.code", "ci.department_code")
+    .select([
+      "ci.id",
+      "ci.slug",
+      "ci.title_en",
+      "ci.title_ur",
+      "ci.status",
+      "ci.published_at",
+      "ci.updated_at",
+      "ci.seo_title",
+      "ci.seo_description",
+      "d.name_en as department_name",
+      "p.issue",
+      "p.chamber_ask",
+      "p.position_status",
+    ])
+    .orderBy("ci.sort_order")
+    .execute();
+
+  const topics = await topicsFor(rows.map((row) => row.id));
+
+  return rows.map((row) => ({
+    ...baseOf(row),
+    issue: row.issue,
+    chamberAsk: row.chamber_ask,
+    positionStatus: row.position_status,
+    topics: topics.get(row.id) ?? [],
+  }));
 }
 
+/* -------------------------------------------------------------------------- */
+/* Figures and indicators                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The counters in the figures band.
+ *
+ * `sort_order` and not a date: these have no publication date anybody renders,
+ * and their order on the homepage is editorial. Without the column the order
+ * would be whatever InnoDB returned, which is stable enough to pass review and
+ * then change for no reason anyone can trace.
+ */
 export async function getKeyFigures(): Promise<KeyFigure[]> {
-  return KEY_FIGURES;
+  const rows = await liveItems("key_figure", new Date())
+    .innerJoin("content_key_figures as k", "k.content_item_id", "ci.id")
+    .select([
+      "ci.id",
+      "ci.title_en",
+      "k.figure_value",
+      "k.suffix",
+      "k.verified_at",
+    ])
+    .orderBy("ci.sort_order")
+    .execute();
+
+  return rows.map((row) => ({
+    id: String(row.id),
+    value: row.figure_value,
+    ...(row.suffix ? { suffix: row.suffix } : {}),
+    labelEn: row.title_en,
+    // Already "YYYY-MM-DD": the pool sets `dateStrings: ["DATE"]`, which is
+    // what keeps a civil date from becoming the day before in another zone.
+    verifiedAt: row.verified_at,
+  }));
 }
 
 export async function getEconomicIndicators(): Promise<EconomicIndicator[]> {
-  return INDICATORS;
-}
+  const rows = await liveItems("economic_indicator", new Date())
+    .innerJoin("content_economic_indicators as i", "i.content_item_id", "ci.id")
+    .select([
+      "ci.id",
+      "ci.title_en",
+      "i.display_value",
+      "i.change_pct",
+      "i.good_when",
+      "i.source",
+      "i.measured_at",
+    ])
+    .orderBy("ci.sort_order")
+    .execute();
 
-export async function getServiceTiles(): Promise<ServiceTile[]> {
-  return SERVICES;
-}
-
-export async function getCommittees(): Promise<Committee[]> {
-  return COMMITTEES;
-}
-
-export async function getPartners(): Promise<Partner[]> {
-  return PARTNERS;
-}
-
-export async function getTestimonials(): Promise<Testimonial[]> {
-  return TESTIMONIALS;
+  return rows.map((row) => ({
+    id: String(row.id),
+    labelEn: row.title_en,
+    value: row.display_value,
+    // DECIMAL arrives as a string. The public type says `number`, and this is
+    // a percentage for display rather than money, so converting here is safe —
+    // which is exactly not true of `payments.amount`, and the reason
+    // `formatMoney` takes a string.
+    ...(row.change_pct !== null ? { changePct: Number(row.change_pct) } : {}),
+    goodWhen: row.good_when,
+    source: row.source,
+    // The date the *figure* is current to, not the row's edit time. Mapping
+    // `ci.updated_at` here would make correcting a typo claim the State Bank
+    // republished its reserves.
+    updatedAt: row.measured_at,
+  }));
 }
 
 /* -------------------------------------------------------------------------- */
-/* Video                                                                       */
+/* Services, committees, partners, testimonials                               */
+/* -------------------------------------------------------------------------- */
+
+export async function getServiceTiles(): Promise<ServiceTile[]> {
+  const rows = await liveItems("service_tile", new Date())
+    .innerJoin("content_service_tiles as s", "s.content_item_id", "ci.id")
+    .select(["ci.id", "ci.title_en", "s.description", "s.href", "s.icon"])
+    .orderBy("ci.sort_order")
+    .execute();
+
+  return rows.map((row) => ({
+    id: String(row.id),
+    labelEn: row.title_en,
+    description: row.description,
+    href: row.href,
+    icon: row.icon,
+  }));
+}
+
+export async function getCommittees(): Promise<Committee[]> {
+  const rows = await liveItems("committee", new Date())
+    .innerJoin("content_committees as c", "c.content_item_id", "ci.id")
+    .select(["ci.slug", "ci.title_en", "c.mandate", "c.member_count"])
+    .orderBy("ci.sort_order")
+    .execute();
+
+  return rows.map((row) => ({
+    slug: row.slug,
+    nameEn: row.title_en,
+    mandate: row.mandate,
+    memberCount: row.member_count,
+  }));
+}
+
+export async function getPartners(): Promise<Partner[]> {
+  const rows = await liveItems("partner", new Date())
+    .innerJoin("content_partners as p", "p.content_item_id", "ci.id")
+    .leftJoin("media_assets as logo", "logo.id", "p.logo_id")
+    .select([
+      "ci.id",
+      "ci.title_en",
+      "p.tier",
+      "logo.src",
+      "logo.alt_en",
+      "logo.alt_ur",
+      "logo.width",
+      "logo.height",
+      "logo.caption",
+    ])
+    .orderBy("ci.sort_order")
+    .execute();
+
+  return rows.map((row) => {
+    const logo = imageOf(row);
+    return {
+      id: String(row.id),
+      name: row.title_en,
+      tier: row.tier,
+      ...(logo ? { logo } : {}),
+    };
+  });
+}
+
+export async function getTestimonials(): Promise<Testimonial[]> {
+  const rows = await liveItems("testimonial", new Date())
+    .innerJoin("content_testimonials as t", "t.content_item_id", "ci.id")
+    .select([
+      "ci.id",
+      "t.quote",
+      "t.author_name",
+      "t.author_role",
+      "t.company",
+    ])
+    .orderBy("ci.sort_order")
+    .execute();
+
+  return rows.map((row) => ({
+    id: String(row.id),
+    quote: row.quote,
+    authorName: row.author_name,
+    authorRole: row.author_role,
+    company: row.company,
+  }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Video                                                                      */
 /* -------------------------------------------------------------------------- */
 
 /**
  * The chamber's own YouTube channel, which the legacy site linked from a header
  * icon and never surfaced anywhere a visitor would find it.
  *
- * Ids, titles and dates come from the channel's public feed. The Urdu titles are
- * the chamber's own — roughly half the channel is published in Urdu, which is
- * why `titleUr` is carried here rather than translated away.
+ * A constant and not a content row: it is the channel's identity, not an item
+ * somebody publishes, and an editor who could change it could repoint the
+ * site's only outbound video link.
  */
 export const YOUTUBE_CHANNEL_URL =
   "https://www.youtube.com/channel/UCQAyoZiYNsntsRWwFbvUr5Q";
 
-const VIDEOS: VideoItem[] = [
-  {
-    id: "vid-1",
-    youtubeId: "XtwEvI2MKbs",
-    // Published as "LCCI DOCOUMENTARY 2026-27"; the typo is corrected the way
-    // the rest of the migration corrects them.
-    titleEn: "LCCI Documentary 2026–27",
-    orientation: "landscape",
-    publishedAt: "2026-10-24T09:46:50+05:00",
-    description:
-      "The chamber's own account of what it does for Lahore's businesses — its departments, its advocacy and the year's work, in one film.",
-    poster: {
-      src: "/video/XtwEvI2MKbs.jpg",
-      altEn:
-        "Overhead view of four people in hard hats studying building plans spread across a table.",
-      width: 960,
-      height: 540,
-    },
-  },
-  {
-    id: "vid-2",
-    youtubeId: "6APbt99cBUk",
-    titleEn: "Prime Minister meets the LCCI President",
-    titleUr:
-      "وزیراعظم کی لاہور چیمبر آف کامرس اینڈ انڈسٹری کے صدر علی حسام اصغر سے ملاقات",
-    orientation: "landscape",
-    publishedAt: "2026-10-25T17:32:07+05:00",
-    poster: {
-      src: "/video/6APbt99cBUk.jpg",
-      altEn:
-        "Two officials seated in conversation in a formal drawing room beside Pakistan flags.",
-      width: 960,
-      height: 540,
-    },
-  },
-  {
-    id: "vid-3",
-    youtubeId: "4e9d47hJWjk",
-    titleEn: "Federal Minister Abdul Aleem Khan visits the Lahore Chamber",
-    orientation: "portrait",
-    publishedAt: "2026-10-24T17:46:18+05:00",
-    poster: {
-      src: "/video/4e9d47hJWjk.jpg",
-      altEn:
-        "A speaker addressing a press conference at the Lahore Chamber, microphones massed on the table in front of him.",
-      width: 480,
-      height: 854,
-    },
-  },
-  {
-    id: "vid-4",
-    youtubeId: "VdiYxCuBwW0",
-    titleEn: "Pakistan and Bangladesh explore new avenues for bilateral trade",
-    orientation: "portrait",
-    publishedAt: "2026-10-23T15:33:19+05:00",
-    poster: {
-      src: "/video/VdiYxCuBwW0.jpg",
-      altEn:
-        "A guest speaking from the chief guest's place at the Lahore Chamber boardroom table.",
-      width: 480,
-      height: 854,
-    },
-  },
-  {
-    id: "vid-5",
-    youtubeId: "J3ug1aLXu_w",
-    titleEn: "Consul General of Türkiye in Lahore visits the Lahore Chamber",
-    orientation: "portrait",
-    publishedAt: "2026-10-21T18:41:46+05:00",
-    poster: {
-      src: "/video/J3ug1aLXu_w.jpg",
-      altEn:
-        "A visiting guest seated at the Lahore Chamber boardroom table behind a chief guest nameplate.",
-      width: 480,
-      height: 854,
-    },
-  },
-];
+/**
+ * Featured videos, newest first.
+ *
+ * The fixture version sorted with `b.publishedAt.localeCompare(a.publishedAt)`,
+ * which compares ISO strings carrying `+05:00` offsets as text — correct only
+ * while every offset is identical. `ORDER BY published_at DESC` compares
+ * instants, so the first video published from a different timezone no longer
+ * sorts into the wrong place.
+ */
+export async function getFeaturedVideos(limit = 5): Promise<VideoItem[]> {
+  const rows = await liveItems("video", new Date())
+    .innerJoin("content_videos as v", "v.content_item_id", "ci.id")
+    .innerJoin("media_assets as poster", "poster.id", "v.poster_id")
+    .select([
+      "ci.id",
+      "ci.title_en",
+      "ci.title_ur",
+      "ci.published_at",
+      "v.youtube_id",
+      "v.orientation",
+      "v.description",
+      "poster.src",
+      "poster.alt_en",
+      "poster.alt_ur",
+      "poster.width",
+      "poster.height",
+      "poster.caption",
+    ])
+    .orderBy("ci.published_at", "desc")
+    .limit(limit)
+    .execute();
+
+  return rows.map((row) => {
+    const poster = imageOf(row);
+    if (!poster || row.published_at === null) {
+      // Unreachable: both joins are inner and `liveItems` requires the date.
+      throw new Error(`video ${row.id} is missing its poster or publication date`);
+    }
+    return {
+      id: String(row.id),
+      youtubeId: row.youtube_id,
+      titleEn: row.title_en,
+      ...(row.title_ur ? { titleUr: row.title_ur } : {}),
+      orientation: row.orientation,
+      publishedAt: row.published_at.toISOString(),
+      poster,
+      ...(row.description ? { description: row.description } : {}),
+    };
+  });
+}
 
 /* -------------------------------------------------------------------------- */
-/* Gallery                                                                     */
+/* Gallery                                                                    */
 /* -------------------------------------------------------------------------- */
 
 /**
- * One dated album, not an undated heap.
+ * The newest published album.
  *
- * The legacy "Picture Gallery" was a single page of twelve images from one
- * political delegation's visit, every one of them captioned with the delegation's
- * name and nothing else — no date, no occasion, no description of what was being
- * shown. These are the chamber's own Annual General Meeting photographs instead:
- * the occasion is known, so the album can be titled and dated honestly.
+ * The signature promises an album rather than `GalleryAlbum | null`, and
+ * changing it would touch a caller — so with nothing published this throws
+ * instead of returning an empty one. That is the right failure: `GalleryV2`
+ * renders the title, the standfirst and the date unconditionally, so an empty
+ * album would put a headed section with three blank lines on the homepage,
+ * while a throw stops the build with the cause named.
  *
- * Alt text names no one. The source files carried none, so every identity in
- * them is unverified by the chamber's Information Department.
+ * It does mean archiving the last published album breaks the homepage, which
+ * is a validation B2's editor owes rather than something this read can fix:
+ * refusing to archive the only album is a sentence in the admin, and a schema
+ * constraint could not express it.
  */
-const GALLERY: GalleryAlbum = {
-  slug: "annual-general-meeting-2026",
-  titleEn: "Annual General Meeting",
-  description:
-    "Members, office-bearers and guests at the chamber's Annual General Meeting and the receptions around it.",
-  occurredAt: "2026-09-30T10:00:00+05:00",
-  images: [
-    {
-      id: "g-1",
-      src: "/photos/hero-6.jpg",
-      altEn:
-        "Members and office-bearers of the Lahore Chamber gathered on the steps of the chamber building beneath its nameplate.",
-      width: 857,
-      height: 577,
-      caption: "Members gather on the chamber steps before the meeting.",
-    },
-    {
-      id: "g-2",
-      src: "/photos/hero-5.jpg",
-      altEn:
-        "A large delegation photographed together on the red carpet outside the Lahore Chamber building.",
-      width: 857,
-      height: 577,
-      caption: "The full delegation on the red carpet at Shahrah-e-Aiwan-e-Tijarat.",
-    },
-    {
-      id: "g-3",
-      src: "/photos/hero-1.jpg",
-      altEn:
-        "Chamber representatives in discussion with a senior government official at a formal meeting.",
-      width: 864,
-      height: 563,
-      caption: "Office-bearers in session with a visiting government official.",
-    },
-    {
-      id: "g-4",
-      src: "/photos/hero-2.jpg",
-      altEn:
-        "A chamber office-bearer shaking hands with a visiting government dignitary at an LCCI reception.",
-      width: 857,
-      height: 567,
-      caption: "A guest is received at the chamber reception.",
-    },
-    {
-      id: "g-5",
-      src: "/photos/hero-3.jpg",
-      altEn:
-        "Chamber representatives greeting a visiting dignitary on the grounds outside a reception venue.",
-      width: 857,
-      height: 577,
-      caption: "Arrivals on the grounds outside the reception venue.",
-    },
-    {
-      id: "g-6",
-      src: "/photos/hero-4.jpg",
-      altEn:
-        "Three chamber office-bearers photographed together on the steps of a reception venue.",
-      width: 857,
-      height: 577,
-      caption: "Office-bearers on the steps between sessions.",
-    },
-  ],
-};
-
-export async function getFeaturedVideos(limit = 5): Promise<VideoItem[]> {
-  return [...VIDEOS]
-    .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt))
-    .slice(0, limit);
-}
-
 export async function getGalleryAlbum(): Promise<GalleryAlbum> {
-  return GALLERY;
+  const now = new Date();
+
+  const album = await liveItems("gallery_album", now)
+    .innerJoin("content_gallery_albums as a", "a.content_item_id", "ci.id")
+    .select(["ci.id", "ci.slug", "ci.title_en", "a.description", "a.occurred_at"])
+    .orderBy("a.occurred_at", "desc")
+    .limit(1)
+    .executeTakeFirst();
+
+  if (!album) {
+    throw new Error(
+      "no published gallery album: the homepage gallery section cannot render " +
+        "without one. Publish an album, or remove the section.",
+    );
+  }
+
+  const images = await getDb()
+    .selectFrom("content_gallery_images as gi")
+    .innerJoin("media_assets as m", "m.id", "gi.media_id")
+    .select([
+      "gi.id",
+      "m.src",
+      "m.alt_en",
+      "m.alt_ur",
+      "m.width",
+      "m.height",
+      "m.caption",
+    ])
+    .where("gi.album_item_id", "=", album.id)
+    .orderBy("gi.sort_order")
+    .execute();
+
+  return {
+    slug: album.slug,
+    titleEn: album.title_en,
+    description: album.description,
+    occurredAt: album.occurred_at.toISOString(),
+    images: images.map((row): GalleryImage => {
+      const image = imageOf(row);
+      if (!image) {
+        // Unreachable: the join is inner and `src` is NOT NULL.
+        throw new Error(`gallery image ${row.id} has no media row`);
+      }
+      return { id: String(row.id), ...image };
+    }),
+  };
 }

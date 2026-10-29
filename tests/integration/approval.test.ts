@@ -115,6 +115,7 @@ function staffActor(
     roleCode,
     roleCodes: [roleCode],
     permissions: new Set(permissions),
+    departmentScopes: [],
     requestId: newUlid(),
     ipHash: "a".repeat(64),
     userAgentHash: "b".repeat(64),

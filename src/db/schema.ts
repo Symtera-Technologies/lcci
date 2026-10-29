@@ -67,6 +67,17 @@ export interface UsersTable {
   /** AES-256-GCM ciphertext. The key lives in the environment, never the DB. */
   totp_secret_enc: Buffer | null;
   mfa_mode: Generated<MfaMode>;
+  /**
+   * Set by an administrator, not by the account holder.
+   *
+   * Policy, where `mfa_mode` is fact. The combination that matters is
+   * required-and-not-enrolled, which is the one state the sign-in gate acts
+   * on: such an account reaches enrolment and nothing else. An account that
+   * is required may not turn two-factor off for itself.
+   */
+  mfa_required: Generated<number>;
+  mfa_required_by: number | null;
+  mfa_required_at: Instant | null;
   status: UserStatus;
   /**
    * Incremented on any change to roles, permissions, status, password, 2FA or
@@ -1061,6 +1072,247 @@ export interface SlaPausesTable {
 /* The database                                                               */
 /* -------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------- */
+/* Content (migration 0016)                                                   */
+/* -------------------------------------------------------------------------- */
+
+export type ContentKind =
+  | "press_release"
+  | "event"
+  | "policy_position"
+  | "notice"
+  | "key_figure"
+  | "economic_indicator"
+  | "service_tile"
+  | "committee"
+  | "partner"
+  | "testimonial"
+  | "video"
+  | "gallery_album";
+
+/** The editorial workflow. Mirrors `BaseContent["status"]` exactly. */
+export type ContentStatus = "draft" | "in_review" | "published" | "archived";
+
+export type ContentEventType =
+  | "seminar"
+  | "training"
+  | "agm"
+  | "delegation"
+  | "exhibition";
+export type PositionStatus = "raised" | "under_review" | "accepted" | "resolved";
+export type NoticeLevel = "info" | "urgent";
+export type IndicatorDirection = "up" | "down" | "neutral";
+export type ServiceIcon =
+  | "renew"
+  | "certificate"
+  | "attestation"
+  | "circular"
+  | "directory";
+export type PartnerTier = "strategic" | "gold" | "silver";
+export type VideoOrientation = "landscape" | "portrait";
+
+export interface DepartmentsTable {
+  code: string;
+  name_en: string;
+  name_ur: string | null;
+  sort_order: Generated<number>;
+  active: Generated<number>;
+  created_at: Instant;
+  updated_at: Instant;
+}
+
+export interface ContentTopicsTable {
+  slug: string;
+  label_en: string;
+  label_ur: string | null;
+  sort_order: Generated<number>;
+}
+
+export interface MediaAssetsTable {
+  id: Generated<number>;
+  src: string;
+  /**
+   * NOT NULL, with no default.
+   *
+   * `ImageRef` makes alt text non-optional, and this is the column that keeps
+   * the promise: an image cannot be registered here without being described.
+   */
+  alt_en: string;
+  alt_ur: string | null;
+  width: number;
+  height: number;
+  caption: string | null;
+  department_code: string | null;
+  uploaded_by: number | null;
+  created_at: Instant;
+  updated_at: Instant;
+}
+
+export interface ContentItemsTable {
+  id: Generated<number>;
+  content_type: ContentKind;
+  slug: string;
+  /** The one human label; the public types expose it under their own names. */
+  title_en: string;
+  title_ur: string | null;
+  status: Generated<ContentStatus>;
+  /**
+   * NULL until first published.
+   *
+   * The live predicate is `status = 'published' AND published_at <= now`, and
+   * NULL fails that comparison — the absence of a publication date is not a
+   * publication date of zero.
+   */
+  published_at: Date | null;
+  department_code: string;
+
+  seo_title: string | null;
+  seo_description: string | null;
+  og_image_id: number | null;
+
+  /** Civil date: "review this by", not an instant anybody schedules against. */
+  review_by: CivilDate | null;
+  scheduled_unpublish_at: Date | null;
+  published_by: number | null;
+  last_reviewed_by: number | null;
+  last_reviewed_at: Date | null;
+
+  sort_order: Generated<number>;
+  version: Generated<number>;
+  created_by: number | null;
+  created_at: Instant;
+  updated_at: Instant;
+}
+
+export interface ContentItemTopicsTable {
+  content_item_id: number;
+  topic_slug: string;
+  sort_order: Generated<number>;
+}
+
+export interface ContentPressReleasesTable {
+  content_item_id: number;
+  summary: string;
+  /** Sanitised HTML, cleaned on write by `src/content/sanitise.ts`. */
+  body_en: string | null;
+  body_ur: string | null;
+  hero_image_id: number | null;
+  spokesperson: string | null;
+}
+
+export interface ContentEventsTable {
+  content_item_id: number;
+  event_type: ContentEventType;
+  starts_at: InstantSet;
+  ends_at: Date | null;
+  venue: string;
+  /** Sanitised HTML, cleaned on write by `src/content/sanitise.ts`. */
+  body_en: string | null;
+  body_ur: string | null;
+  /** Prose ("Free for members"), not money. Event bookings (B9) add an amount. */
+  fee: string | null;
+  capacity: number | null;
+  registration_open: Generated<number>;
+  registration_deadline: Date | null;
+}
+
+export interface ContentPolicyPositionsTable {
+  content_item_id: number;
+  issue: string;
+  chamber_ask: string;
+  /** Sanitised HTML, cleaned on write by `src/content/sanitise.ts`. */
+  body_en: string | null;
+  body_ur: string | null;
+  /** Where the ask has got to with government — not the editorial status. */
+  position_status: Generated<PositionStatus>;
+}
+
+export interface ContentNoticesTable {
+  content_item_id: number;
+  message_en: string;
+  message_ur: string | null;
+  href: string | null;
+  level: Generated<NoticeLevel>;
+  starts_at: InstantSet;
+  /** NOT NULL: a notice cannot exist without an end date. */
+  ends_at: InstantSet;
+}
+
+export interface ContentKeyFiguresTable {
+  content_item_id: number;
+  figure_value: number;
+  suffix: string | null;
+  /** A civil date, rendered as a "figures verified on" stamp. */
+  verified_at: CivilDate;
+}
+
+export interface ContentEconomicIndicatorsTable {
+  content_item_id: number;
+  display_value: string;
+  /** DECIMAL — arrives as a string and is converted at the seam, not before. */
+  change_pct: string | null;
+  good_when: Generated<IndicatorDirection>;
+  source: string;
+  /**
+   * The date the figure is current to, which is not the row's edit time.
+   *
+   * The public type calls this `updatedAt`. Mapping it to
+   * `content_items.updated_at` would make correcting a typo claim the State
+   * Bank republished its reserves.
+   */
+  measured_at: CivilDate;
+}
+
+export interface ContentServiceTilesTable {
+  content_item_id: number;
+  description: string;
+  href: string;
+  icon: ServiceIcon;
+}
+
+export interface ContentCommitteesTable {
+  content_item_id: number;
+  mandate: string;
+  member_count: number;
+}
+
+export interface ContentPartnersTable {
+  content_item_id: number;
+  tier: PartnerTier;
+  logo_id: number | null;
+}
+
+export interface ContentTestimonialsTable {
+  content_item_id: number;
+  quote: string;
+  author_name: string;
+  author_role: string;
+  company: string;
+}
+
+export interface ContentVideosTable {
+  content_item_id: number;
+  youtube_id: string;
+  orientation: VideoOrientation;
+  /** NOT NULL: the facade shows a local poster so Google is never contacted. */
+  poster_id: number;
+  description: string | null;
+}
+
+export interface ContentGalleryAlbumsTable {
+  content_item_id: number;
+  description: string;
+  /** When the photographs were taken, not when the album was published. */
+  occurred_at: InstantSet;
+}
+
+export interface ContentGalleryImagesTable {
+  id: Generated<number>;
+  album_item_id: number;
+  media_id: number;
+  sort_order: Generated<number>;
+}
+
 export interface Database {
   schema_migrations: SchemaMigrationsTable;
 
@@ -1126,6 +1378,25 @@ export interface Database {
   rate_limit_counters: RateLimitCountersTable;
   rate_limit_events: RateLimitEventsTable;
   csp_reports: CspReportsTable;
+
+  departments: DepartmentsTable;
+  content_topics: ContentTopicsTable;
+  media_assets: MediaAssetsTable;
+  content_items: ContentItemsTable;
+  content_item_topics: ContentItemTopicsTable;
+  content_press_releases: ContentPressReleasesTable;
+  content_events: ContentEventsTable;
+  content_policy_positions: ContentPolicyPositionsTable;
+  content_notices: ContentNoticesTable;
+  content_key_figures: ContentKeyFiguresTable;
+  content_economic_indicators: ContentEconomicIndicatorsTable;
+  content_service_tiles: ContentServiceTilesTable;
+  content_committees: ContentCommitteesTable;
+  content_partners: ContentPartnersTable;
+  content_testimonials: ContentTestimonialsTable;
+  content_videos: ContentVideosTable;
+  content_gallery_albums: ContentGalleryAlbumsTable;
+  content_gallery_images: ContentGalleryImagesTable;
 }
 
 export type ApplicationRow = Selectable<ApplicationsTable>;

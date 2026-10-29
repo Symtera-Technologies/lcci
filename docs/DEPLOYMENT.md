@@ -12,6 +12,16 @@ VPS.
 `next build` routinely exceeds the per-application memory ceiling on shared
 cPanel plans. Build on a developer machine or in CI, then ship the artefact.
 
+**The build needs a reachable database.** Since migration 0016 the public pages
+read their content from MySQL rather than from fixtures, and they are
+statically prerendered — so the machine running `npm run build` has to be able
+to connect to a database holding the published content, with the same
+`DB_*` variables the server uses. A build against an empty or unreachable
+database produces a site with empty sections rather than an error, because the
+repository has no fixture fallback by design. Pointing the build at production
+over an SSH tunnel is the straightforward answer; a restored dump is the
+alternative when the tunnel is not available.
+
 ```bash
 npm ci
 npm run build
@@ -80,8 +90,21 @@ Passenger will simply respawn the old one.
 - **No background daemons.** A self-hosted Meilisearch/Typesense process is not
   available here, which is why search sits behind an adapter and ships on MySQL
   `FULLTEXT` first.
-- **Scheduled publish/unpublish** runs from cPanel → *Cron Jobs*, hitting a
-  revalidation route. Notice expiry needs no cron: it is evaluated on read.
+- **Scheduled publish/unpublish** needs no cron for *correctness*: a row is
+  public when `status = 'published'`, its `published_at` has passed and its
+  `scheduled_unpublish_at` has not, and the repository asks that question in
+  SQL on every read. The same is true of notice expiry, which is a window on
+  two columns.
+
+  What cron is for is **cache revalidation**. The public pages are prerendered,
+  so "evaluated on read" means evaluated when the page is rendered — at build
+  time until something regenerates it. Until the revalidation route lands
+  (plan item B4), a notice whose window closes, or a press release timed for
+  Friday, does not change the served HTML on its own. Two things follow:
+  editorial changes made in the admin are not live until the site is rebuilt
+  or revalidated, and the schedule is only as accurate as the revalidation
+  interval. Say so to LCCI rather than let them discover it with an expired
+  notice on the homepage.
 
 ---
 

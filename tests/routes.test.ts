@@ -107,23 +107,53 @@ describe("route inventory", () => {
     expect(routes.map((r) => r.urlPath)).toContain("/");
   });
 
+  /**
+   * **An exact entry, not a pattern that happens to match.**
+   *
+   * `routePolicy()` is right to resolve `/admin/content/press_release` through
+   * `/admin/content/[type]` — that is a request for the dynamic route. It is
+   * the wrong question to ask about *coverage*, because a discovered route
+   * file is its own route with its own code, and a static segment sitting
+   * beside a dynamic sibling silently inherits the sibling’s permissions.
+   *
+   * Found by deleting the `/admin/content/review` entry and watching this test
+   * pass: `/admin/content/review` matched `/admin/content/[type]`, so the new
+   * report counted as covered by a policy written for a different screen. Here
+   * the two happen to agree. The next such page may need a narrower grant, and
+   * nobody would have been told.
+   */
   it("names every protected route and every API route in ROUTE_POLICY", async () => {
     const routes = await discoverRoutes();
     const unlisted: string[] = [];
 
     for (const route of routes) {
       if (!requiresPolicy(route.urlPath)) continue;
-      const { policy } = routePolicy(route.urlPath);
-      if (!policy) unlisted.push(`${route.urlPath}  (src/app/${route.file})`);
+      if (!ROUTE_POLICY[route.urlPath]) {
+        unlisted.push(`${route.urlPath}  (src/app/${route.file})`);
+      }
     }
 
     expect(
       unlisted,
-      "These routes need a declared policy and have no entry in " +
-        "src/server/auth/policy.ts. Add one — and remember the table is not " +
-        "the check itself: the route must also call requireStaff/requireMember.\n" +
+      "These routes need a declared policy and have no entry of their own in " +
+        "src/server/auth/policy.ts. A dynamic sibling that happens to match is " +
+        "not enough. Add one — and remember the table is not the check " +
+        "itself: the route must also call requireStaff/requireMember.\n" +
         unlisted.join("\n"),
     ).toEqual([]);
+  });
+
+  /**
+   * The looser question, kept beside the strict one.
+   *
+   * A request for a concrete path must still land on a policy, because that is
+   * what the proxy and the DAL actually ask. The test above says every route
+   * *file* is declared; this one says the resolver finds a declaration for the
+   * URLs those files serve.
+   */
+  it("resolves a policy for a concrete path served by a dynamic route", () => {
+    expect(routePolicy("/admin/content/press_release").policy).not.toBeNull();
+    expect(routePolicy("/admin/content/press_release/41").policy).not.toBeNull();
   });
 
   it("marks a policy entry as planned exactly while its route is missing", async () => {

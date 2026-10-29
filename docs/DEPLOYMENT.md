@@ -49,13 +49,31 @@ That produces:
 2. **Database** — cPanel → *MySQL Databases*: create the database and a user,
    grant all privileges, and note the credentials for `.env`.
 3. **Environment** — add variables in the Node.js app screen, or place a `.env`
-   in the application root:
+   in the application root. **Copy `.env.example` and fill it in**; it is the
+   contract `src/server/env.ts` validates at load, and a missing REQUIRED value
+   is a 503 on the first request that needs it rather than a default. The
+   minimum that will boot:
 
    ```
    NODE_ENV=production
-   NEXT_PUBLIC_SITE_URL=https://lcci.com.pk
-   DATABASE_URL=mysql://user:pass@localhost:3306/dbname
+   SITE_ORIGIN=https://staging.lcci.com.pk
+   DB_HOST=127.0.0.1
+   DB_PORT=3306
+   DB_USER=
+   DB_PASSWORD=
+   DB_NAME=
+   PRIVATE_UPLOAD_ROOT=/home/USER/lcci-documents
+   ENCRYPTION_KEY=
+   IP_HASH_PEPPER=
+   CRON_SECRET=
    ```
+
+   Generate the three secrets with
+   `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`,
+   and create `PRIVATE_UPLOAD_ROOT` by hand at mode 0700, outside the
+   application root. Staging needs its own `ENCRYPTION_KEY`: sharing
+   production's would mean a staging compromise decrypting production's
+   identity documents.
 
 4. **tmp directory** — `mkdir -p ~/lcci/tmp`. Passenger watches
    `tmp/restart.txt`.
@@ -67,7 +85,7 @@ That produces:
 Over SSH, from the application root:
 
 ```bash
-git pull origin main
+git pull origin master
 rm -rf .next
 # upload or rsync the built .next/standalone, .next/static and public
 cp -r .next/standalone/. .
@@ -76,6 +94,52 @@ touch tmp/restart.txt
 
 `touch tmp/restart.txt` is the restart — do not kill the process by hand, as
 Passenger will simply respawn the old one.
+
+Migrations are **never** run by the deploy. Run them yourself, once the files
+are in place and before the restart:
+
+```bash
+npm run migrate:status
+npm run migrate
+```
+
+Forward-only and checksummed, so a file edited after it was applied is refused
+rather than silently skipped. Where SSH is unavailable, the numbered `.sql`
+files under `migrations/` paste straight into phpMyAdmin in order.
+
+### Cron, once per environment
+
+Nothing on a schedule runs without it: no outgoing email, no SLA recompute, and
+no revalidation, so a published page never reaches the served HTML. Set it up
+when the environment is first built, and again whenever a job is added.
+
+```bash
+umask 077 && printf '%s' "$CRON_SECRET" > ~/.lcci-cron-secret
+npm run cron:print -- --origin=https://staging.example.com
+```
+
+Paste the output into cPanel’s cron editor. It is generated from
+`src/server/jobs/schedule.ts`, so the crontab cannot quietly fall behind the
+code — which is how a job ends up never having run in production and nobody
+finding out. Check `date` over SSH first: the server’s timezone is often not
+Asia/Karachi, and the overnight jobs are written in local time.
+
+### Staging specifically
+
+Same procedure, four differences that matter:
+
+- **Its own database and its own secrets.** Never point staging at the
+  production database: the admin can publish, archive and delete, and nothing
+  in the application knows which database it is talking to.
+- **Seed it.** `npm run seed:rbac` creates the roles and permissions, then
+  `npm run seed:content` loads the launch content. Without the first, nobody
+  can sign in to anything.
+- **A first staff account.** `npm run dev:staff -- name@lcci.org.pk "Full Name"
+  super_admin` prints a password once. Two-factor is off by default; turn it on
+  at `/admin/security`, or require it from `/admin/users`.
+- **Keep it out of search.** Staging serves the same pages as production and
+  will be indexed if it is reachable; put HTTP auth in front of it at the
+  cPanel level, which also stops an AI crawler reading draft copy.
 
 ---
 
@@ -98,13 +162,22 @@ Passenger will simply respawn the old one.
 
   What cron is for is **cache revalidation**. The public pages are prerendered,
   so "evaluated on read" means evaluated when the page is rendered — at build
-  time until something regenerates it. Until the revalidation route lands
-  (plan item B4), a notice whose window closes, or a press release timed for
-  Friday, does not change the served HTML on its own. Two things follow:
-  editorial changes made in the admin are not live until the site is rebuilt
-  or revalidated, and the schedule is only as accurate as the revalidation
-  interval. Say so to LCCI rather than let them discover it with an expired
-  notice on the homepage.
+  time until something regenerates it. The `content-revalidate` job runs every
+  ten minutes, asks whether any publication or take-down time has passed since
+  it last looked, and marks the site for rebuild when one has.
+
+  **So the schedule is accurate to the revalidation interval, and no better.**
+  Ten minutes is the number to give LCCI: a press release timed for 9:00 is
+  live by 9:10, and an expired notice is gone within ten minutes of its window
+  closing. Tell them the figure rather than let them infer a precision the
+  system does not have — and if they need the hour exactly, that is a change
+  to one line in `src/server/jobs/schedule.ts` and to the crontab, not a
+  rebuild.
+
+  **If cron is not wired up, nothing on a schedule happens at all.** The rows
+  are still right; the served HTML is whatever was last built. On staging that
+  usually means an editor publishes something and cannot see it, which is a
+  missing crontab line, not a bug.
 
 ---
 
@@ -112,7 +185,5 @@ Passenger will simply respawn the old one.
 
 - Canonical domain: `lcci.com.pk` or `lcci.org.pk` (spec §14.1). The 301 map for
   ~890 legacy press URLs depends on it.
-- CMS: **not Payload** — it ships no MySQL adapter. Directus is the current
-  recommendation; Strapi 5 and headless WordPress are the alternatives.
 - Whether a CDN (Cloudflare) sits in front. Without one, the Lighthouse ≥90
   mobile target in spec §9 is not realistically reachable on shared hosting.

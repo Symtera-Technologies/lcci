@@ -86,6 +86,27 @@ export const JOB_SCHEDULE = {
   },
 
   /**
+   * Every ten minutes, and that interval *is* the promise.
+   *
+   * Nothing here decides whether an item is public — the repository asks that
+   * in SQL on every read, so a scheduled publish is already correct the moment
+   * its instant passes. What is not correct is the HTML already sitting on
+   * disk: the public pages are prerendered, so a press release timed for
+   * Friday morning does not appear until something rebuilds the page.
+   *
+   * So the accuracy of every scheduled publish and unpublish on the site is
+   * this number. Ten minutes is short enough that nobody watches an expired
+   * notice on the homepage, and long enough that the job is almost always a
+   * single `COUNT(*)` that finds nothing. Tell LCCI the figure rather than let
+   * them infer a precision the system does not have.
+   */
+  "content-revalidate": {
+    schedule: "*/10 * * * *",
+    description:
+      "Rebuild the public pages when a scheduled publish or unpublish has come due.",
+  },
+
+  /**
    * Hourly. This is the monitoring on a host that has none, so its cadence is
    * "how late is it acceptable to learn that mail stopped working" — and the
    * answer for a system that emails sign-in codes is not "tomorrow".

@@ -94,6 +94,20 @@ export default async function ContentHubPage() {
         </span>
       </p>
 
+      <p className="mt-2 text-[0.9375rem]">
+        <Link
+          href="/admin/content/review"
+          className="text-brand-800 underline decoration-brand-700/40 underline-offset-4 hover:decoration-brand-700"
+        >
+          Needs a look
+        </Link>
+        <span className="text-ink-600">
+          {" "}
+          — live pages that have gone a year unchecked, reached a date somebody
+          set, or passed their own take-down time.
+        </span>
+      </p>
+
       {waiting > 0 && (
         <p className="mt-6 rounded-lg border border-brand-600/40 bg-brand-50 px-4 py-3 text-[0.9375rem] text-brand-800">
           {waiting === 1 ? "One item is" : `${waiting} items are`} waiting for review.

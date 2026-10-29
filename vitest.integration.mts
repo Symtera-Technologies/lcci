@@ -46,6 +46,10 @@ export default defineConfig({
     alias: {
       "@": path.resolve(import.meta.dirname, "src"),
       "server-only": path.resolve(import.meta.dirname, "tests/stubs/server-only.ts"),
+      // `revalidatePath` throws outside a request context, which would leave
+      // the `content-revalidate` job's cursor and window arithmetic untested.
+      // See tests/stubs/next-cache.ts.
+      "next/cache": path.resolve(import.meta.dirname, "tests/stubs/next-cache.ts"),
     },
   },
 });

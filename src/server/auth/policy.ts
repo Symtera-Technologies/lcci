@@ -301,6 +301,15 @@ export const ROUTE_POLICY: Record<string, RoutePolicy> = {
     note: "The content hub, grouped by part of the site rather than by content type: an editor thinks \"the homepage is wrong\", not \"I need to edit a service tile\". Counts carry the same department predicate as the lists, so the number here is what the editor will find inside.",
   },
 
+  // A static segment, and therefore resolved before `[type]` below. Safe only
+  // while no content type is named "review", which `tests/routes.test.ts`
+  // asserts rather than leaves to memory.
+  "/admin/content/review": {
+    audience: "staff",
+    permissions: ["content.read_draft"],
+    note: "The stale-content report (spec §8.3): published pages a year without a check, pages whose review date has passed, and pages sitting past their own take-down time. Read-only and department-scoped — clearing a row means putting the page back through review, not ticking it off here.",
+  },
+
   "/admin/content/[type]": {
     audience: "staff",
     permissions: ["content.read_draft"],

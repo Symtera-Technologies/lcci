@@ -7,6 +7,7 @@ import { sweep } from "@/server/rate-limit";
 import { verifyAuditChain } from "@/server/audit";
 import { systemActor } from "@/server/actor";
 import { recomputeFlaggedClocks } from "@/membership/calendar";
+import { revalidatePath } from "next/cache";
 import { jobSchedule, type JobName, type JobSchedule } from "@/server/jobs/schedule";
 
 /**
@@ -93,6 +94,80 @@ export const JOB_HANDLERS = {
   "outbox-prune": async () => {
     const pruned = await prunePayloads(30);
     return { processed: pruned, more: pruned >= 500 };
+  },
+
+  /**
+   * Rebuild the public pages when a scheduled instant has come due.
+   *
+   * The job does not change a single row, and that is the design rather than
+   * an omission. Whether an item is public is `status = 'published' AND
+   * published_at <= now AND (scheduled_unpublish_at IS NULL OR
+   * scheduled_unpublish_at > now)`, asked in SQL on every read — so the
+   * database is already right the moment the instant passes, with or without
+   * this tick. What is stale is the prerendered HTML.
+   *
+   * So all this has to decide is "did anything cross a boundary since I last
+   * looked", and the window comes from `lastSummary` rather than from a column
+   * on the rows. A cursor in the job keeps the content tables free of
+   * scheduling bookkeeping that would then need its own backfill, its own
+   * index and its own answer to "what if two workers tick at once".
+   *
+   * A missed tick is self-healing: the cursor is only advanced by a run that
+   * finished, so the next one covers both windows. The first run ever, and any
+   * run after the cursor is lost, looks back an hour — six intervals, enough
+   * to cover a restart without revalidating the whole site for no reason.
+   *
+   * **`revalidatePath` marks rather than rebuilds**, which is what makes a
+   * ten-minute interval affordable. Called from a route handler it flags the
+   * path, and the rebuild happens on the next visit — so a tick during the
+   * night costs nothing, and the promise to LCCI is "live within ten minutes
+   * of the scheduled time", not "regenerated on the dot".
+   *
+   * **This is the one job `npm run dev:job` cannot run.** `revalidatePath`
+   * needs a request context and throws `Invariant: static generation store
+   * missing` without one; the real caller is `POST /api/cron/[job]`, which has
+   * one. Verified, not assumed — so if you came here because that script
+   * failed, nothing is broken.
+   */
+  "content-revalidate": async (ctx) => {
+    const now = new Date();
+    const since = instantOrNull(ctx.lastSummary?.checkedThrough)
+      ?? new Date(now.getTime() - 60 * 60 * 1000);
+
+    const crossed = await getDb()
+      .selectFrom("content_items")
+      .select(({ fn }) => fn.countAll<number>().as("count"))
+      .where("status", "=", "published")
+      .where((eb) =>
+        eb.or([
+          eb.and([
+            eb("published_at", ">", since),
+            eb("published_at", "<=", now),
+          ]),
+          eb.and([
+            eb("scheduled_unpublish_at", ">", since),
+            eb("scheduled_unpublish_at", "<=", now),
+          ]),
+        ]),
+      )
+      .executeTakeFirst();
+
+    const due = Number(crossed?.count ?? 0);
+
+    // Broad on purpose, exactly as the editor's own save path is: the homepage
+    // renders ten of the twelve content types, so a map from type to path
+    // would be more code than this and wrong the first time a band moves.
+    if (due > 0) revalidatePath("/", "layout");
+
+    return {
+      processed: due,
+      more: false,
+      detail: {
+        checkedThrough: now.toISOString(),
+        revalidated: due > 0,
+        windowFrom: since.toISOString(),
+      },
+    };
   },
 
   "rate-limit-sweep": async () => {
@@ -203,6 +278,20 @@ export const JOB_HANDLERS = {
 } satisfies Record<JobName, JobHandler>;
 
 /** Schedule and handler together, for the runner. */
+/**
+ * An instant off `last_summary`, or null if it is not one.
+ *
+ * The column is JSON written by a previous release of this code, so it is
+ * read as untrusted: a cursor that has become a string like "null", or a
+ * timestamp from a job that was renamed, must fall back to the default window
+ * rather than produce an `Invalid Date` that silently matches nothing.
+ */
+function instantOrNull(value: unknown): Date | null {
+  if (typeof value !== "string") return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export function jobDefinition(name: JobName): JobSchedule & { run: JobHandler } {
   return { ...jobSchedule(name), run: JOB_HANDLERS[name] };
 }

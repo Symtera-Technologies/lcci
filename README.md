@@ -170,19 +170,23 @@ No pop-ups, no auto-rotating hero.
 
 ---
 
-## Homepage variant 2 — `/v2`
+## The homepage — `components/v2/`
 
-A second design direction, at its own route so both can be opened side by side
-and judged honestly. `/` imports nothing from `v2/` and `v2/` imports nothing
-from `home/`; they share only the content repository, the design tokens and the
-site chrome — which is exactly what should be shared when the question is
-"which layout?". The route is `noindex`: two near-identical homepages competing
-in search results would be a real problem, not a hypothetical one.
+Two design directions were built. **The second one won and is now `/`**; the
+first is still served at `/v2`, `noindex`, so the two can be opened side by
+side while LCCI confirms the choice. The two sets of sections import nothing
+from each other — they share only the content repository, the design tokens
+and the site chrome — which is why the swap was two page files and no
+component changes.
 
-Direction is **bento + glass + depth**: a dark ink stage lit by a drifting
-green mesh, with content floating on layered shadows and real perspective. The
-palette and type are unchanged — this is a layout and motion variant, not a
-rebrand.
+`/v2` is meant to go. Once the homepage is signed off, delete
+`src/app/v2/page.tsx` and `src/components/home/` with it: a variant left
+standing becomes a second homepage nobody maintains.
+
+The chosen direction is **bento + glass + depth**: a dark ink stage lit by a
+drifting green mesh, with content floating on layered shadows and real
+perspective. The palette and type are unchanged — this was a layout and motion
+variant, not a rebrand.
 
 ```
 src/components/v2/

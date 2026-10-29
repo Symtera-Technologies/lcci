@@ -121,6 +121,10 @@ export async function previewItem(
   let query = getDb()
     .selectFrom("content_items as ci")
     .innerJoin("departments as d", "d.code", "ci.department_code")
+    // Left, not inner: a note outlives the account that left it, because the
+    // FK is ON DELETE SET NULL. An inner join here would make the note vanish
+    // along with the reviewer, which is the one moment it matters most.
+    .leftJoin("users as rn", "rn.id", "ci.review_note_by")
     .select([
       "ci.id",
       "ci.content_type",
@@ -194,6 +198,10 @@ export async function previewList(
   let query = getDb()
     .selectFrom("content_items as ci")
     .innerJoin("departments as d", "d.code", "ci.department_code")
+    // Left, not inner: a note outlives the account that left it, because the
+    // FK is ON DELETE SET NULL. An inner join here would make the note vanish
+    // along with the reviewer, which is the one moment it matters most.
+    .leftJoin("users as rn", "rn.id", "ci.review_note_by")
     .select([
       "ci.id",
       "ci.content_type",
@@ -397,6 +405,20 @@ export async function countForList(
 /* -------------------------------------------------------------------------- */
 
 /** An item, its satellite values in form shape, and its topic tags. */
+/**
+ * The reviewer's standing objection, where there is one.
+ *
+ * Only ever the current note. The audit log holds every note ever left, and
+ * showing a history of superseded objections on the editing screen would bury
+ * the one the editor has to act on.
+ */
+export interface ReviewNote {
+  readonly note: string;
+  /** Null when the reviewer's account has since been removed. */
+  readonly byName: string | null;
+  readonly at: Date;
+}
+
 export interface EditorItem {
   readonly item: PreviewItem;
   /**
@@ -411,6 +433,7 @@ export interface EditorItem {
    */
   readonly values: Record<string, string | boolean>;
   readonly topics: readonly string[];
+  readonly review: ReviewNote | null;
 }
 
 export async function loadForEditing(
@@ -425,6 +448,10 @@ export async function loadForEditing(
   let parentQuery = getDb()
     .selectFrom("content_items as ci")
     .innerJoin("departments as d", "d.code", "ci.department_code")
+    // Left, not inner: a note outlives the account that left it, because the
+    // FK is ON DELETE SET NULL. An inner join here would make the note vanish
+    // along with the reviewer, which is the one moment it matters most.
+    .leftJoin("users as rn", "rn.id", "ci.review_note_by")
     .select([
       "ci.id",
       "ci.content_type",
@@ -442,7 +469,10 @@ export async function loadForEditing(
       "ci.seo_description",
       "ci.og_image_id",
       "ci.sort_order",
+      "ci.review_note",
+      "ci.review_note_at",
       "d.name_en as department_name",
+      "rn.full_name as review_note_by_name",
     ])
     .where("ci.id", "=", id)
     .where("ci.content_type", "=", contentType);
@@ -514,6 +544,14 @@ export async function loadForEditing(
     },
     values,
     topics,
+    review:
+      parent.review_note !== null && parent.review_note_at !== null
+        ? {
+            note: parent.review_note,
+            byName: parent.review_note_by_name,
+            at: parent.review_note_at,
+          }
+        : null,
   };
 }
 

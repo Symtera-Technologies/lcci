@@ -12,6 +12,8 @@ import {
   deleteDraftContentItem,
   updateContentItem,
 } from "@/content/admin";
+import { transitionContentItem } from "@/content/transitions";
+import { isContentTransitionCode } from "@/content/workflow";
 import { isContentKind } from "@/content/fields";
 import type { ContentKind } from "@/db/schema";
 
@@ -110,6 +112,81 @@ export const deleteContent = withAction(
     redirect(`/admin/content/${kind}?deleted=1`);
   },
 );
+
+/**
+ * Move an item between statuses.
+ *
+ * **The declared permission is the floor, not the rule.** `withAction` takes
+ * one static permission and the real one depends on which move is asked for —
+ * `content.submit_review` to send a draft on, `content.publish` to publish it,
+ * `content.archive` to file it away. So the wrapper checks the permission every
+ * content role holds, and `transitionContentItem` checks the one this
+ * particular move needs, against the status it reads inside the transaction.
+ * Deciding here would mean deciding from a status the form carried, which is
+ * whatever it was when the page was rendered.
+ *
+ * **Irreversible, all six of them.** Publishing puts text on a public website,
+ * and taking it down again does not unsend it to whoever was reading. That is
+ * enough to want the `SameSite=Strict` sentinel on the request, so a
+ * cross-site POST cannot publish an embargoed press release early.
+ */
+
+const TRANSITION = ROUTING.extend({
+  code: z.string().refine(isContentTransitionCode, "Unknown action."),
+  /** Only read for `return_to_draft`; see `cleanNote`. */
+  note: z.string().max(4000).optional(),
+});
+
+export const transitionContent = withAction(
+  {
+    name: "content.transition",
+    audience: "staff",
+    permission: "content.read_draft",
+    schema: TRANSITION,
+    irreversible: true,
+    rateLimit: { name: "contentSave", subject: "actor" },
+  },
+  async ({ input, actor }) => {
+    const kind = input.content_type as ContentKind;
+
+    if (input.id === undefined || input.version === undefined) {
+      return fail("This form is out of date. Reload the page and try again.");
+    }
+
+    try {
+      const moved = await transitionContentItem(
+        actor as ActorContext,
+        kind,
+        input.id,
+        input.version,
+        input.code,
+        input.note,
+      );
+      revalidate();
+      return ok(CONFIRMATION[moved.status]);
+    } catch (error) {
+      if (error instanceof ContentInvalidError) {
+        return fail(error.message, error.fieldErrors);
+      }
+      throw error;
+    }
+  },
+);
+
+/**
+ * What the editor is told, in terms of what a visitor can now see.
+ *
+ * Keyed on where the item landed rather than on the move, because that is the
+ * question being answered: "is this on the site?". "Published." on its own
+ * invites the reasonable assumption that the page has changed, which it has
+ * not until the scheduled instant passes and the cache is rebuilt.
+ */
+const CONFIRMATION: Record<string, string> = {
+  draft: "Back to draft. It is not on the public site.",
+  in_review: "Submitted for review. It is not on the public site.",
+  published: "Published. It is live on the public site.",
+  archived: "Archived. It is off every list, and its own page still resolves.",
+};
 
 /**
  * Rebuild the public pages this change could have affected.

@@ -8,8 +8,10 @@ import { CONTENT_FORMS, isContentKind, parentFields } from "@/content/fields";
 import { ContentEditorForm } from "@/components/admin/content-editor-form";
 import { ContentStatusPill, visibilityNote } from "@/components/admin/content-status-pill";
 import { ContentDeleteForm } from "@/components/admin/content-delete-form";
+import { ContentWorkflowControls } from "@/components/admin/content-workflow-controls";
+import { availableContentTransitions } from "@/content/workflow";
 import { formatDate, formatDateShort } from "@/lib/format";
-import { deleteContent, saveContent } from "../actions";
+import { deleteContent, saveContent, transitionContent } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -69,7 +71,18 @@ export default async function EditContentPage({
     form.hasTopics ? listTopics() : Promise.resolve([]),
   ]);
 
-  const { item, values, topics: selected } = loaded;
+  const { item, values, topics: selected, review } = loaded;
+
+  // The same table the server enforces, asked the same question. A button that
+  // renders here is one `transitionContentItem` will carry out.
+  const choices = availableContentTransitions(
+    { status: item.status, departmentCode: item.departmentCode },
+    { permissions: actor.permissions, departmentScopes: actor.departmentScopes },
+  ).map((transition) => ({
+    code: transition.code,
+    label: transition.label,
+    to: transition.to,
+  }));
   const note = visibilityNote(item);
   const canDelete =
     actor.permissions.has("content.edit") &&
@@ -120,15 +133,41 @@ export default async function EditContentPage({
 
       {item.status === "published" && (
         /*
-          Said on the screen rather than left to be found out. Until B3's
-          workflow lands, `content.edit` saves straight over live copy — which
-          is the honest state of the system, and an editor correcting a
-          published release should know their next keystroke is public.
+          Still said on the screen, and still true. The workflow governs the
+          *status*; it does not put a review between an editor and the save
+          button on copy that is already live. Someone correcting a published
+          release should know their next keystroke is public, and that taking
+          it off the site first is a button below.
         */
         <p className="mt-6 rounded-lg border border-urgent-600/40 bg-urgent-50 px-4 py-3 text-[0.9375rem] text-urgent-800">
           This item is published. Saving changes what visitors see as soon as
-          the pages rebuild — there is no review step yet.
+          the pages rebuild. To work on it privately, take it off the site
+          first.
         </p>
+      )}
+
+      {review && item.status === "draft" && (
+        /*
+          The reviewer's objection, at the top, where somebody opening the item
+          they were sent back reads it before they start typing. Only shown on
+          a draft: once it has been submitted again the note describes a
+          version that no longer exists.
+        */
+        <section
+          aria-labelledby="review-note-heading"
+          className="mt-6 max-w-2xl rounded-lg border border-stone-300 bg-stone-50 px-4 py-3"
+        >
+          <h2
+            id="review-note-heading"
+            className="text-[0.875rem] font-semibold text-ink-950"
+          >
+            Sent back by {review.byName ?? "a reviewer"} on{" "}
+            {formatDate(review.at.toISOString())}
+          </h2>
+          <p className="mt-1 text-[0.9375rem] leading-relaxed whitespace-pre-line text-ink-800">
+            {review.note}
+          </p>
+        </section>
       )}
 
       <ContentEditorForm
@@ -151,6 +190,26 @@ export default async function EditContentPage({
         item={{ id: item.id, version: item.version, status: item.status }}
         action={saveContent}
       />
+
+      <section
+        aria-labelledby="workflow-heading"
+        className="mt-12 border-t border-stone-200 pt-6"
+      >
+        <h2 id="workflow-heading" className="text-[0.9375rem] font-semibold text-ink-950">
+          Where this goes next
+        </h2>
+        <p className="mt-1 max-w-2xl text-[0.875rem] text-ink-600">
+          These move the item, not the form above — save your changes first, or
+          they stay unsaved while the status moves without them.
+        </p>
+        <ContentWorkflowControls
+          kind={type}
+          id={item.id}
+          version={item.version}
+          choices={choices}
+          action={transitionContent}
+        />
+      </section>
 
       {canDelete && (
         <section aria-labelledby="delete-heading" className="mt-12 border-t border-stone-200 pt-6">

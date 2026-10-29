@@ -1177,6 +1177,17 @@ export interface ContentItemsTable {
   last_reviewed_by: number | null;
   last_reviewed_at: Date | null;
 
+  /**
+   * The reviewer's note, and who left it when.
+   *
+   * Current state, not history: cleared the moment the item is submitted
+   * again, because a note describing the version that has since been revised
+   * is worse than no note. The audit log keeps every one of them.
+   */
+  review_note: string | null;
+  review_note_by: number | null;
+  review_note_at: Date | null;
+
   sort_order: Generated<number>;
   version: Generated<number>;
   created_by: number | null;

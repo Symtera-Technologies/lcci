@@ -20,6 +20,7 @@
  */
 
 import process from "node:process";
+import net from "node:net";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { getDb, sql } from "@/db/client";
@@ -107,6 +108,81 @@ function diagnose(error: unknown): Diagnosis {
   return { summary: message, fix: [`Driver code: ${code || "none"}`] };
 }
 
+/**
+ * Where MySQL actually is, when the configured answer turned out to be wrong.
+ *
+ * Both halves matter and they answer different questions. If TCP is open, the
+ * socket was never needed and DB_HOST is the fix. If a socket exists at a path
+ * nobody guessed, that path is the fix. If neither, the server is not on this
+ * machine at all and the credentials being valid says nothing about where to
+ * reach it.
+ *
+ * The paths are the ones shared hosts actually use. Guessing
+ * /var/lib/mysql/mysql.sock because it is the common one is how the previous
+ * attempt failed; this looks instead of guessing.
+ */
+const SOCKET_CANDIDATES: readonly string[] = [
+  "/var/lib/mysql/mysql.sock",
+  "/var/run/mysqld/mysqld.sock",
+  "/run/mysqld/mysqld.sock",
+  "/tmp/mysql.sock",
+  "/opt/cpanel/mysql/var/lib/mysql/mysql.sock",
+  "/var/lib/mysql/mysql.sock.lock",
+];
+
+function tcpOpen(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port });
+    const done = (result: boolean) => {
+      socket.destroy();
+      resolve(result);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => done(true));
+    socket.once("timeout", () => done(false));
+    socket.once("error", () => done(false));
+  });
+}
+
+async function probe(): Promise<void> {
+  console.error("");
+  console.error("Looking for the server on this machine:");
+
+  const found = SOCKET_CANDIDATES.filter((candidate) => existsSync(candidate));
+  if (found.length > 0) {
+    console.error("");
+    console.error("  Socket file(s) that DO exist here:");
+    for (const candidate of found) console.error(`    ${candidate}`);
+    console.error("");
+    console.error(`  Set DB_SOCKET to one of those. Most likely: ${found[0] ?? ""}`);
+  } else {
+    console.error("  No socket file at any of the usual paths:");
+    for (const candidate of SOCKET_CANDIDATES) console.error(`    ${candidate}`);
+  }
+
+  const tcp = await tcpOpen("127.0.0.1", 3306);
+  console.error("");
+  console.error(
+    tcp
+      ? "  TCP 127.0.0.1:3306 IS open — clear DB_SOCKET and use DB_HOST/DB_PORT."
+      : "  TCP 127.0.0.1:3306 is closed.",
+  );
+
+  if (found.length === 0 && !tcp) {
+    console.error("");
+    console.error(
+      "  Neither a socket nor TCP on this machine. MySQL is very likely on a\n" +
+        "  DIFFERENT host, which shared plans do run. Ask the panel for the\n" +
+        "  database hostname and set DB_HOST to it (and allow this machine\n" +
+        "  under Remote MySQL). Credentials being valid says nothing about\n" +
+        "  where the server is.",
+    );
+    console.error("");
+    console.error("  The authoritative answer, if the client is installed:");
+    console.error("    mysqladmin variables | grep -E '^\\| (socket|port|hostname)'");
+  }
+}
+
 function target(): string {
   return env.db.socket
     ? `socket ${env.db.socket}`
@@ -157,6 +233,7 @@ async function main(): Promise<number> {
     console.error(`FAILED: ${summary}`);
     console.error("");
     for (const line of fix) console.error(line);
+    await probe();
     return 1;
   }
 

@@ -21,7 +21,8 @@
 
 import process from "node:process";
 import net from "node:net";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { lookup } from "node:dns/promises";
 import path from "node:path";
 import { getDb, sql } from "@/db/client";
 import { closePool } from "@/db/pool";
@@ -120,6 +121,13 @@ function diagnose(error: unknown): Diagnosis {
  * The paths are the ones shared hosts actually use. Guessing
  * /var/lib/mysql/mysql.sock because it is the common one is how the previous
  * attempt failed; this looks instead of guessing.
+ *
+ * This probe exists because of one deployment where every guess cost a full
+ * container build to disprove: `127.0.0.1` refused, the socket path the server
+ * itself reported did not exist, and the host's public address refused too —
+ * each answer arriving twenty seconds and one deploy later. Enumerating every
+ * candidate in a single run, inside the network namespace that actually
+ * matters, replaces that loop with one command.
  */
 const SOCKET_CANDIDATES: readonly string[] = [
   "/var/lib/mysql/mysql.sock",
@@ -144,42 +152,136 @@ function tcpOpen(host: string, port: number, timeoutMs = 2000): Promise<boolean>
   });
 }
 
+/**
+ * Whether this process is inside a container, which changes what the answers
+ * mean rather than merely being trivia.
+ *
+ * In a container `127.0.0.1` is the container, so it can never be the host's
+ * database however the panel describes the deployment — and a unix socket on
+ * the host is not in this filesystem at all, so no `DB_SOCKET` value can work.
+ * Those two facts together produce `ECONNREFUSED` on every loopback address
+ * AND `ENOENT` on the socket path the server itself reports, which reads like
+ * a misconfiguration and is not one.
+ */
+function containerMarkers(): readonly string[] {
+  const markers: string[] = [];
+  if (existsSync("/.dockerenv")) markers.push("/.dockerenv exists");
+  try {
+    const cgroup = readFileSync("/proc/1/cgroup", "utf8");
+    for (const needle of ["docker", "containerd", "kubepods", "lxc"]) {
+      if (cgroup.includes(needle)) markers.push(`/proc/1/cgroup names ${needle}`);
+    }
+  } catch {
+    // Not Linux, or not readable. Absence is not evidence either way.
+  }
+  return markers;
+}
+
+/**
+ * This container's default gateway — which is the host, seen from inside a
+ * bridge network, and therefore the first address worth trying.
+ *
+ * Read from `/proc/net/route` rather than by shelling out to `ip`, because a
+ * slim base image such as `node:24` does not ship iproute2 and the whole point
+ * of this probe is to work where nothing else is installed. The gateway field
+ * is little-endian hex, hence the byte order below.
+ */
+function defaultGateway(): string | null {
+  try {
+    const lines = readFileSync("/proc/net/route", "utf8").trim().split("\n").slice(1);
+    for (const line of lines) {
+      const fields = line.trim().split(/\s+/);
+      const destination = fields[1];
+      const gateway = fields[2];
+      if (destination !== "00000000" || !gateway) continue;
+      const packed = Number.parseInt(gateway, 16);
+      if (!Number.isFinite(packed) || packed === 0) continue;
+      return [
+        packed & 0xff,
+        (packed >> 8) & 0xff,
+        (packed >> 16) & 0xff,
+        (packed >> 24) & 0xff,
+      ].join(".");
+    }
+  } catch {
+    // Not Linux.
+  }
+  return null;
+}
+
 async function probe(): Promise<void> {
   console.error("");
-  console.error("Looking for the server on this machine:");
+  console.error("Looking for the server, from THIS process's point of view:");
+
+  const markers = containerMarkers();
+  if (markers.length > 0) {
+    console.error("");
+    console.error("  This process is inside a CONTAINER:");
+    for (const marker of markers) console.error(`    ${marker}`);
+    console.error("");
+    console.error("    So 127.0.0.1 is this container, not the host, and a unix");
+    console.error("    socket on the host is not in this filesystem. Neither can");
+    console.error("    work here however the database is configured.");
+  }
 
   const found = SOCKET_CANDIDATES.filter((candidate) => existsSync(candidate));
+  console.error("");
   if (found.length > 0) {
-    console.error("");
     console.error("  Socket file(s) that DO exist here:");
     for (const candidate of found) console.error(`    ${candidate}`);
     console.error("");
     console.error(`  Set DB_SOCKET to one of those. Most likely: ${found[0] ?? ""}`);
   } else {
-    console.error("  No socket file at any of the usual paths:");
-    for (const candidate of SOCKET_CANDIDATES) console.error(`    ${candidate}`);
+    console.error("  No socket file at any of the usual paths.");
   }
 
-  const tcp = await tcpOpen("127.0.0.1", 3306);
-  console.error("");
-  console.error(
-    tcp
-      ? "  TCP 127.0.0.1:3306 IS open — clear DB_SOCKET and use DB_HOST/DB_PORT."
-      : "  TCP 127.0.0.1:3306 is closed.",
-  );
+  // Every address worth trying, in the order a human should try them, with the
+  // reason attached — an open port is only useful alongside what to set.
+  const candidates = new Map<string, string>();
+  if (env.db.host) candidates.set(env.db.host, "DB_HOST, as currently configured");
+  const gateway = defaultGateway();
+  if (gateway) candidates.set(gateway, "this container's default gateway (the host)");
+  candidates.set("172.17.0.1", "Docker's default bridge gateway");
+  try {
+    const resolved = await lookup("host.docker.internal");
+    candidates.set(resolved.address, "host.docker.internal");
+  } catch {
+    // Only present when the runtime adds it; its absence is informative, not
+    // an error.
+  }
+  candidates.set("127.0.0.1", "loopback (this machine, or this container)");
 
-  if (found.length === 0 && !tcp) {
+  console.error("");
+  console.error(`  TCP port ${String(env.db.port)}, by address:`);
+  const reachable: string[] = [];
+  for (const [host, why] of candidates) {
+    const open = await tcpOpen(host, env.db.port);
+    if (open) reachable.push(host);
+    console.error(`    ${open ? "OPEN  " : "closed"}  ${host.padEnd(16)} ${why}`);
+  }
+
+  console.error("");
+  if (reachable.length > 0) {
+    console.error(`  Set DB_HOST=${reachable[0] ?? ""} and leave DB_SOCKET empty.`);
     console.error("");
-    console.error(
-      "  Neither a socket nor TCP on this machine. MySQL is very likely on a\n" +
-        "  DIFFERENT host, which shared plans do run. Ask the panel for the\n" +
-        "  database hostname and set DB_HOST to it (and allow this machine\n" +
-        "  under Remote MySQL). Credentials being valid says nothing about\n" +
-        "  where the server is.",
-    );
+    console.error("  If that then reports access denied, the address was right and");
+    console.error("  the grant is not: a connection from here is a REMOTE one, so");
+    console.error("  the user needs access from this address. On cPanel that is");
+    console.error("  Remote MySQL, per address.");
+  } else {
+    console.error("  Nothing answered on any address, so the database is not");
+    console.error("  reachable from this network namespace at all. Credentials");
+    console.error("  being valid says nothing about where the server is.");
     console.error("");
-    console.error("  The authoritative answer, if the client is installed:");
-    console.error("    mysqladmin variables | grep -E '^\\| (socket|port|hostname)'");
+    console.error("  If this is a container, the deployment has to connect the two:");
+    console.error("    - run the database as a service on the same container network");
+    console.error("      and use its service name as DB_HOST, or");
+    console.error("    - allow the container's subnet through the host firewall AND");
+    console.error("      grant the user access from it, or");
+    console.error("    - mount the host's socket directory into the container.");
+    console.error("");
+    console.error("  A port open to the public internet but refused from here is a");
+    console.error("  firewall rule or an egress block, not a wrong address.");
   }
 }
 
@@ -199,10 +301,15 @@ async function main(): Promise<number> {
 
   // Which files these values could have come from, because "the credentials
   // are correct" and "this process can see them" are different claims and the
-  // gap between them is most of the confusion on this host. `next build` reads
-  // both of these from the application root; cPanel's Node.js app screen is a
-  // third source that only the running application sees.
-  const roots = [".env", ".env.local"].map((name) => ({
+  // gap between them is most of the confusion on this deployment.
+  //
+  // All three are listed whether or not this run loaded them, because the
+  // precedence is the trap: `next build` reads `.env.production.local` (only
+  // when NODE_ENV=production, so never `next dev`), then `.env.local`, then
+  // `.env`. The npm scripts read `.env` and `.env.local` only, and the
+  // `:remote` variants read `.env.production.local` alone. A deploy panel's
+  // own environment screen is a fourth source that no file records.
+  const roots = [".env", ".env.local", ".env.production.local"].map((name) => ({
     name,
     present: existsSync(path.join(process.cwd(), name)),
   }));
@@ -217,10 +324,12 @@ async function main(): Promise<number> {
     for (const problem of missing) console.error(`  - ${problem}`);
     console.error("");
     console.error(
-      "`next build` loads .env and .env.local from the application root. " +
-        "Variables set in cPanel's Node.js app screen belong to the running " +
-        "application and are NOT exported into an SSH shell, so a build run " +
-        "over SSH sees only the files.",
+      "`next build` reads these from the application root. Variables set in a " +
+        "hosting panel — cPanel's Node.js app screen, or a container " +
+        "platform's environment tab — belong to the process that panel " +
+        "starts, and are NOT exported into your shell or into a build run " +
+        "somewhere else. A value being correct on the server says nothing " +
+        "about this process being able to see it.",
     );
     return 1;
   }

@@ -27,13 +27,23 @@ Error: connect ECONNREFUSED 127.0.0.1:3306
 ```
 
 That is the correct outcome — far better than shipping an empty homepage — but
-it says nothing about which setting is wrong, so check first:
+it says nothing about which setting is wrong, and it arrives after a minute of
+compilation. So `npm run build` now runs `scripts/preflight-build.ts` first, as
+npm's `prebuild`, and nothing has to be remembered:
 
 ```bash
 npm ci
-npm run db:check     # names the problem in a second, and the fix
-npm run build
+npm run build        # the preflight runs first, and stops here if it can't work
 ```
+
+The preflight resolves the environment with Next's own loader, so it is reading
+the same values the build will, then checks the three things that fail a build
+badly: a placeholder left in a `DB_*` or `PRIVATE_UPLOAD_ROOT` value, an origin
+variable that is not a URL, and whether MySQL actually answers. It names the
+variable and prints the host and port it tried — never a secret — and exits
+non-zero before Next starts. `npm run db:check` remains the fuller database
+diagnostic: it reports an empty database, a missing migration and which `.env`
+files it found.
 
 An **empty** database does not fail the build. It produces a site with empty
 sections and no error, because the repository has no fixture fallback by
@@ -110,6 +120,7 @@ That produces:
    ```
    NODE_ENV=production
    SITE_ORIGIN=https://staging.lcci.com.pk
+   NEXT_PUBLIC_SITE_URL=https://staging.lcci.com.pk
    DB_HOST=127.0.0.1
    DB_PORT=3306
    DB_USER=
@@ -120,6 +131,14 @@ That produces:
    IP_HASH_PEPPER=
    CRON_SECRET=
    ```
+
+   The two origins are a pair and are routinely half-set. `SITE_ORIGIN` is read
+   by `next.config.ts` for the server-action origin check; `NEXT_PUBLIC_SITE_URL`
+   is read by `src/app/layout.tsx` for `metadataBase` and is **inlined into the
+   client bundle at build time**, so it belongs in the build environment as well
+   as the server's, and changing it on the host alone does nothing. Set one and
+   not the other and the site serves canonical URLs for a different domain,
+   which no test catches and no page looks wrong because of.
 
    Generate the three secrets with
    `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`,

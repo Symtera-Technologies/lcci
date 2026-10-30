@@ -8,6 +8,38 @@ import {
   publicCsp,
 } from "./src/server/csp";
 
+/**
+ * The host `SITE_ORIGIN` names, for the server-action origin check.
+ *
+ * Validated rather than passed straight to `new URL`, because the failure is
+ * otherwise unreadable: a placeholder or a bare hostname throws
+ * `TypeError: Invalid URL` from `next.config.compiled.js` with no mention of
+ * which variable was wrong, and the whole build stops before it compiles a
+ * line. That is exactly what a half-filled `.env.production.local` produces,
+ * and the message below is the difference between a two-minute fix and an
+ * afternoon.
+ *
+ * Unset is still allowed and still means "use Next's default", because the
+ * value is genuinely optional until the canonical domain is settled (plan
+ * open question 15). Set-but-not-a-URL is the mistake.
+ */
+function allowedOriginHosts(): string[] | undefined {
+  const origin = process.env.SITE_ORIGIN?.trim();
+  if (!origin) return undefined;
+
+  try {
+    return [new URL(origin).host];
+  } catch {
+    throw new Error(
+      `SITE_ORIGIN is not a valid URL: ${JSON.stringify(origin)}. ` +
+        "It must be the canonical public origin with its scheme, for example " +
+        "https://lcci.com.pk — not a bare hostname and not a placeholder. " +
+        "In a production build Next reads .env.production.local before " +
+        ".env.local, so check that file first.",
+    );
+  }
+}
+
 const nextConfig: NextConfig = {
   // Passenger (cPanel Node.js app manager) boots a plain Node server, so the
   // build must be self-contained rather than relying on a serverless adapter.
@@ -78,9 +110,7 @@ const nextConfig: NextConfig = {
        * well-known cPanel-plus-Next failure and it is worth ten minutes of
        * `curl -v` on the real host.
        */
-      allowedOrigins: process.env.SITE_ORIGIN
-        ? [new URL(process.env.SITE_ORIGIN).host]
-        : undefined,
+      allowedOrigins: allowedOriginHosts(),
     },
   },
 

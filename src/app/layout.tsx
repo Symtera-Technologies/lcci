@@ -15,7 +15,36 @@ const newsreader = Newsreader({
   weight: ["400", "500", "600", "700"],
 });
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lcci.com.pk";
+/**
+ * The origin every canonical and Open Graph URL is resolved against.
+ *
+ * Separate from `SITE_ORIGIN`, and both are needed: `SITE_ORIGIN` is a server
+ * secret-adjacent value used for the server-action origin check, while this
+ * one is inlined into the client bundle because `metadataBase` is evaluated
+ * where metadata is rendered. Setting one and not the other is the common
+ * mistake, which is why `docs/DEPLOYMENT.md` lists them together.
+ *
+ * Validated rather than handed to `new URL` directly: a placeholder left in
+ * `.env.production.local` otherwise fails the build with `TypeError: Invalid
+ * URL` and no indication of which variable produced it.
+ */
+function siteUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (!configured) return "https://lcci.com.pk";
+
+  try {
+    new URL(configured);
+    return configured;
+  } catch {
+    throw new Error(
+      `NEXT_PUBLIC_SITE_URL is not a valid URL: ${JSON.stringify(configured)}. ` +
+        "It must include the scheme, for example https://lcci.com.pk. Leave it " +
+        "unset to fall back to the production domain.",
+    );
+  }
+}
+
+const SITE_URL = siteUrl();
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

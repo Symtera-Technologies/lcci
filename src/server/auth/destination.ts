@@ -33,7 +33,9 @@ export const DEFAULT_DESTINATION = "/membership/apply";
  * - Inside the member area, so a redirect cannot be aimed at an admin path a
  *   member may not hold.
  * - Not back to the sign-in page, which would be a loop that reads as a failure
- *   immediately after a success.
+ *   immediately after a success. Nor to the registration page, which is the
+ *   same loop: both of them end by redirecting *here*, so either as a
+ *   destination means signing in and landing on a form asking you to sign in.
  *
  * Anything else silently becomes the default. A visitor who followed a mangled
  * link wants to get in, not to read an explanation of why their link was wrong.
@@ -46,5 +48,6 @@ export function safeDestination(value: unknown): string {
     return DEFAULT_DESTINATION;
   }
   if (value.startsWith("/membership/sign-in")) return DEFAULT_DESTINATION;
+  if (value.startsWith("/membership/register")) return DEFAULT_DESTINATION;
   return value;
 }

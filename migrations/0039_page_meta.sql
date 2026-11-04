@@ -1,0 +1,35 @@
+-- The chips under a page heading, as content.
+--
+-- The designed page header carries two or three short standing facts beside
+-- the title — "Established 1923", "Lahore". When `/about/history` was first
+-- moved onto that header the chips were a constant in the route file, read
+-- from `src/content/chamber.ts`, which made them the only thing on the page an
+-- editor could see and not change. That is precisely the failure this whole
+-- CMS exists to prevent, and it would have been copied to every page the
+-- header is rolled out to.
+--
+-- So: one nullable column, and a page with none renders without them.
+--
+-- ## Why a delimited string and not a table
+--
+-- Three short strings with no properties of their own, that exist only in the
+-- order they are written, and that are never queried, joined or counted. A
+-- satellite table would add a join, an ordering column and a second editor
+-- screen to store what is a line of text. A JSON column would need validation
+-- this cannot enforce in MySQL 8 and MariaDB alike — and cPanel ships MariaDB
+-- far more often, which is the constraint behind several of these decisions.
+--
+-- Pipe-separated, because a comma is the character most likely to appear
+-- inside one of these facts ("Lahore, Punjab") and a pipe is the one least
+-- likely. `src/content/fields.ts` splits and trims it; blank entries are
+-- dropped there rather than stored, so a trailing pipe is harmless.
+--
+-- ## What belongs in it, and what does not
+--
+-- Standing facts about the chamber. Not a summary, not a tagline, not a
+-- second standfirst: the chips sit above the body, so anything editorial here
+-- competes with the heading it is meant to support. 120 characters is enough
+-- for three short facts and not enough for a sentence, which is the point.
+ALTER TABLE content_pages
+  ADD COLUMN meta_en VARCHAR(120) NULL AFTER standfirst_ur,
+  ADD COLUMN meta_ur VARCHAR(160) NULL AFTER meta_en;

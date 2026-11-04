@@ -44,6 +44,7 @@
 
 import { getDb } from "@/db/client";
 import type { ContentKind } from "@/db/schema";
+import { portraitKey, splitMeta } from "./fields";
 
 import type {
   Committee,
@@ -51,11 +52,15 @@ import type {
   EventItem,
   GalleryAlbum,
   GalleryImage,
+  Hero,
+  HeroAction,
+  Page,
   ImageRef,
   KeyFigure,
   Notice,
   Partner,
   PolicyPosition,
+  Portrait,
   PressRelease,
   ServiceTile,
   Testimonial,
@@ -208,6 +213,243 @@ async function topicsFor(itemIds: readonly number[]): Promise<Map<number, TopicS
 }
 
 /* -------------------------------------------------------------------------- */
+/* Pages                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One page of prose by slug, or null when nothing is published at it.
+ *
+ * **Null rather than a throw**, which is the opposite call to `getHero` and
+ * `getGalleryAlbum`, because the consequence is different. Those two are bands
+ * on the homepage that render unconditionally, so an absent row leaves a hole
+ * in a page that is otherwise fine. A page’s route, by contrast, carries its
+ * own heading, breadcrumb and description from the typed IA — so with nothing
+ * published it still renders a correct, navigable page that simply has no
+ * prose on it yet.
+ *
+ * That difference matters for 48 routes going in before the copy for them
+ * exists. The alternative — throwing — would mean the whole site failing to
+ * build until every page had been written, which is not a sequence anybody can
+ * work in.
+ *
+ * It also means a slug nobody has created is indistinguishable from one left
+ * in draft, which is correct: in both cases there is no published prose at
+ * that address.
+ */
+export async function getPage(slug: string, now = new Date()): Promise<Page | null> {
+  const row = await liveItems("page", now)
+    .innerJoin("content_pages as p", "p.content_item_id", "ci.id")
+    .innerJoin("departments as d", "d.code", "ci.department_code")
+    .leftJoin("media_assets as hero", "hero.id", "p.hero_image_id")
+    .select([
+      "ci.id",
+      "ci.slug",
+      "ci.title_en",
+      "ci.title_ur",
+      "ci.status",
+      "ci.published_at",
+      "ci.updated_at",
+      "ci.seo_title",
+      "ci.seo_description",
+      "d.name_en as department_name",
+      "p.standfirst_en",
+      "p.standfirst_ur",
+      "p.meta_en",
+      "p.meta_ur",
+      "p.body_en",
+      "p.body_ur",
+      "hero.src",
+      "hero.alt_en",
+      "hero.alt_ur",
+      "hero.width",
+      "hero.height",
+      "hero.caption",
+    ])
+    .where("ci.slug", "=", slug)
+    .executeTakeFirst();
+
+  if (!row) return null;
+
+  const heroImage = imageOf(row);
+  // Absent, not empty: see the note on `Page.meta`. A column holding nothing
+  // but separators has to behave the same way a NULL does, which is why this
+  // is a length check on the split and not a truthiness check on the column.
+  const meta = splitMeta(row.meta_en);
+  const metaUr = splitMeta(row.meta_ur);
+
+  return {
+    ...baseOf(row),
+    ...(row.standfirst_en ? { standfirstEn: row.standfirst_en } : {}),
+    ...(row.standfirst_ur ? { standfirstUr: row.standfirst_ur } : {}),
+    ...(meta.length > 0 ? { meta } : {}),
+    ...(metaUr.length > 0 ? { metaUr } : {}),
+    ...(row.body_en ? { bodyEn: row.body_en } : {}),
+    ...(row.body_ur ? { bodyUr: row.body_ur } : {}),
+    ...(heroImage ? { heroImage } : {}),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Hero                                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * An editable link, when both halves are present.
+ *
+ * The label and the href are two nullable columns that only mean anything
+ * together, and the alternative to checking both is a button with no text or a
+ * word that goes nowhere.
+ */
+function actionOf(label: string | null, href: string | null): HeroAction | undefined {
+  if (!label?.trim() || !href?.trim()) return undefined;
+  return { labelEn: label, href };
+}
+
+/**
+ * The live homepage hero.
+ *
+ * **Throws rather than returning null**, which is the same call
+ * `getGalleryAlbum` makes below and for the same reason: `HeroV2` renders the
+ * headline, the standfirst and the buttons unconditionally, so an absent hero
+ * would put an empty 88vh stage at the top of the homepage. A throw stops the
+ * build and names the cause instead.
+ *
+ * It does mean that archiving the only published hero breaks the homepage.
+ * That is a validation the admin owes — refusing to archive the last one is a
+ * sentence on a screen, and no schema constraint can express "unless it is the
+ * only one" — and it is a louder, more recoverable failure than a homepage
+ * that quietly loses its headline.
+ *
+ * **The newest published row wins.** There is no `is_active` flag: publishing
+ * a hero with a future `published_at` schedules it, and reverting is
+ * republishing the previous row. Both come free from the workflow that every
+ * other content type already uses, and both are audited.
+ */
+export async function getHero(now = new Date()): Promise<Hero> {
+  const row = await liveItems("hero", now)
+    .innerJoin("content_heroes as h", "h.content_item_id", "ci.id")
+    // Three inner joins, so a hero can only be read with all three planes
+    // present. The FKs are NOT NULL, so this cannot fail for a row that
+    // exists — the joins are inner to say so to the type checker as well.
+    .innerJoin("media_assets as lead", "lead.id", "h.lead_image_id")
+    .innerJoin("media_assets as behind", "behind.id", "h.behind_image_id")
+    .innerJoin("media_assets as front", "front.id", "h.front_image_id")
+    .select([
+      "ci.id",
+      "h.badge_en",
+      "h.headline_en",
+      "h.headline_ur",
+      "h.headline_highlight_en",
+      "h.subhead_en",
+      "h.subhead_ur",
+      "h.primary_cta_label_en",
+      "h.primary_cta_href",
+      "h.secondary_cta_label_en",
+      "h.secondary_cta_href",
+      "h.member_prompt_en",
+      "h.member_link_label_en",
+      "h.member_link_href",
+      "h.caption_en",
+      "h.stat_value_en",
+      "h.stat_label_en",
+      // Aliased per plane, because `imageOf` reads one flat set of media
+      // column names and there are three of them in this row.
+      "lead.src as lead_src",
+      "lead.alt_en as lead_alt_en",
+      "lead.alt_ur as lead_alt_ur",
+      "lead.width as lead_width",
+      "lead.height as lead_height",
+      "lead.caption as lead_caption",
+      "behind.src as behind_src",
+      "behind.alt_en as behind_alt_en",
+      "behind.alt_ur as behind_alt_ur",
+      "behind.width as behind_width",
+      "behind.height as behind_height",
+      "behind.caption as behind_caption",
+      "front.src as front_src",
+      "front.alt_en as front_alt_en",
+      "front.alt_ur as front_alt_ur",
+      "front.width as front_width",
+      "front.height as front_height",
+      "front.caption as front_caption",
+    ])
+    .orderBy("ci.published_at", "desc")
+    .orderBy("ci.id", "desc")
+    .limit(1)
+    .executeTakeFirst();
+
+  if (!row) {
+    throw new Error(
+      "No homepage hero is published. The homepage cannot render without one: " +
+        "publish a hero under Content → Homepage → Homepage heroes.",
+    );
+  }
+
+  const leadImage = imageOf({
+    src: row.lead_src,
+    alt_en: row.lead_alt_en,
+    alt_ur: row.lead_alt_ur,
+    width: row.lead_width,
+    height: row.lead_height,
+    caption: row.lead_caption,
+  });
+  const behindImage = imageOf({
+    src: row.behind_src,
+    alt_en: row.behind_alt_en,
+    alt_ur: row.behind_alt_ur,
+    width: row.behind_width,
+    height: row.behind_height,
+    caption: row.behind_caption,
+  });
+  const frontImage = imageOf({
+    src: row.front_src,
+    alt_en: row.front_alt_en,
+    alt_ur: row.front_alt_ur,
+    width: row.front_width,
+    height: row.front_height,
+    caption: row.front_caption,
+  });
+
+  if (!leadImage || !behindImage || !frontImage) {
+    // Unreachable: all three joins are inner and all three FKs are NOT NULL.
+    throw new Error(`hero ${row.id} is missing one of its three photographs`);
+  }
+
+  const primaryAction = actionOf(row.primary_cta_label_en, row.primary_cta_href);
+  if (!primaryAction) {
+    // Unreachable for the same reason: both columns are NOT NULL.
+    throw new Error(`hero ${row.id} has no primary call to action`);
+  }
+
+  const secondaryAction = actionOf(row.secondary_cta_label_en, row.secondary_cta_href);
+  const memberAction = actionOf(row.member_link_label_en, row.member_link_href);
+
+  return {
+    id: String(row.id),
+    badgeEn: row.badge_en,
+    headlineEn: row.headline_en,
+    ...(row.headline_ur ? { headlineUr: row.headline_ur } : {}),
+    ...(row.headline_highlight_en
+      ? { headlineHighlightEn: row.headline_highlight_en }
+      : {}),
+    subheadEn: row.subhead_en,
+    ...(row.subhead_ur ? { subheadUr: row.subhead_ur } : {}),
+    primaryAction,
+    ...(secondaryAction ? { secondaryAction } : {}),
+    ...(row.member_prompt_en ? { memberPromptEn: row.member_prompt_en } : {}),
+    ...(memberAction ? { memberAction } : {}),
+    ...(row.caption_en ? { captionEn: row.caption_en } : {}),
+    // Both or neither: a figure with nothing beside it is not a statistic.
+    ...(row.stat_value_en && row.stat_label_en
+      ? { statValueEn: row.stat_value_en, statLabelEn: row.stat_label_en }
+      : {}),
+    leadImage,
+    behindImage,
+    frontImage,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Notices                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -258,10 +500,19 @@ export async function getActiveNotice(now = new Date()): Promise<Notice | null> 
 /* Newsroom                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export async function getLatestPressReleases(limit = 4): Promise<PressRelease[]> {
-  const now = new Date();
-
-  const rows = await liveItems("press_release", now)
+/**
+ * The columns every press-release read selects, and the mapper for them.
+ *
+ * One builder and one mapper rather than three copies, because there are now
+ * three reads of this table -- the homepage's four, the newsroom index's page,
+ * and one by slug -- and a column added to the type has to reach all three or
+ * the same press release renders differently depending on which page you are
+ * on. `body_en` is exactly that case: it has been in the table and in the
+ * admin's editor since migration 0018 and was selected by nothing, so an
+ * editor could write the body of a press release and watch it appear nowhere.
+ */
+function pressReleaseRows(now: Date) {
+  return liveItems("press_release", now)
     .innerJoin("content_press_releases as pr", "pr.content_item_id", "ci.id")
     .innerJoin("departments as d", "d.code", "ci.department_code")
     .leftJoin("media_assets as hero", "hero.id", "pr.hero_image_id")
@@ -277,6 +528,8 @@ export async function getLatestPressReleases(limit = 4): Promise<PressRelease[]>
       "ci.seo_description",
       "d.name_en as department_name",
       "pr.summary",
+      "pr.body_en",
+      "pr.body_ur",
       "pr.spokesperson",
       "hero.src",
       "hero.alt_en",
@@ -284,23 +537,95 @@ export async function getLatestPressReleases(limit = 4): Promise<PressRelease[]>
       "hero.width",
       "hero.height",
       "hero.caption",
-    ])
+    ]);
+}
+
+type PressReleaseRow = Awaited<ReturnType<ReturnType<typeof pressReleaseRows>["execute"]>>[number];
+
+function mapPressRelease(
+  row: PressReleaseRow,
+  topics: Map<number, TopicSlug[]>,
+): PressRelease {
+  const heroImage = imageOf(row);
+  return {
+    ...baseOf(row),
+    summary: row.summary,
+    ...(row.body_en ? { bodyEn: row.body_en } : {}),
+    ...(row.body_ur ? { bodyUr: row.body_ur } : {}),
+    ...(heroImage ? { heroImage } : {}),
+    topics: topics.get(row.id) ?? [],
+    ...(row.spokesperson ? { spokesperson: row.spokesperson } : {}),
+  };
+}
+
+export async function getLatestPressReleases(limit = 4): Promise<PressRelease[]> {
+  const rows = await pressReleaseRows(new Date())
     .orderBy("ci.published_at", "desc")
     .limit(limit)
     .execute();
 
   const topics = await topicsFor(rows.map((row) => row.id));
+  return rows.map((row) => mapPressRelease(row, topics));
+}
 
-  return rows.map((row) => {
-    const heroImage = imageOf(row);
-    return {
-      ...baseOf(row),
-      summary: row.summary,
-      ...(heroImage ? { heroImage } : {}),
-      topics: topics.get(row.id) ?? [],
-      ...(row.spokesperson ? { spokesperson: row.spokesperson } : {}),
-    };
-  });
+/**
+ * One page of the press archive, newest first, with the total beside it.
+ *
+ * The total is a second query rather than a window function, because
+ * `COUNT(*) OVER ()` needs MySQL 8 and this ships to a host that serves
+ * MariaDB as often as not -- see the stack notes in the README. It is also the
+ * cheaper read of the two: the count touches only `idx_content_live`.
+ *
+ * Paginated rather than complete because the archive is ~895 items once the
+ * legacy press releases are imported. Rendering all of them would be a 2 MB
+ * page, and `OFFSET` is the right tool here despite its reputation: these
+ * pages are statically prerendered at build time, so the deep pages' cost is
+ * paid once by the build and never by a visitor.
+ */
+export async function getPressReleases({
+  limit = 12,
+  offset = 0,
+}: { limit?: number; offset?: number } = {}): Promise<{
+  items: PressRelease[];
+  total: number;
+}> {
+  const now = new Date();
+
+  const [rows, count] = await Promise.all([
+    pressReleaseRows(now).orderBy("ci.published_at", "desc").limit(limit).offset(offset).execute(),
+    liveItems("press_release", now)
+      .select((eb) => eb.fn.countAll<number>().as("total"))
+      .executeTakeFirst(),
+  ]);
+
+  const topics = await topicsFor(rows.map((row) => row.id));
+
+  return {
+    items: rows.map((row) => mapPressRelease(row, topics)),
+    // `countAll` comes back as a string from mysql2 for BIGINT counts.
+    total: Number(count?.total ?? 0),
+  };
+}
+
+/**
+ * One press release by slug, or null when nothing is published at it.
+ *
+ * Null rather than a throw, for the reason `getPage` gives: the route turns it
+ * into `notFound()`, and a throw would make a mistyped URL a 500 rather than a
+ * 404. Archived releases do not resolve here yet -- around 890 legacy press
+ * URLs are being redirected into this space and archiving one must not
+ * manufacture a 404, so `liveItems`' note about resolving archived rows with
+ * `noindex` is work this function owes once the archive is imported.
+ */
+export async function getPressRelease(slug: string): Promise<PressRelease | null> {
+  const row = await pressReleaseRows(new Date())
+    .where("ci.slug", "=", slug)
+    .executeTakeFirst();
+
+  if (!row) return null;
+
+  const topics = await topicsFor([row.id]);
+  return mapPressRelease(row, topics);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -315,8 +640,8 @@ export async function getLatestPressReleases(limit = 4): Promise<PressRelease[]>
  * difference that matters once the chamber's 180 events a year have
  * accumulated for a decade.
  */
-export async function getUpcomingEvents(limit = 3, now = new Date()): Promise<EventItem[]> {
-  const rows = await liveItems("event", now)
+function eventRows(now: Date) {
+  return liveItems("event", now)
     .innerJoin("content_events as e", "e.content_item_id", "ci.id")
     .innerJoin("departments as d", "d.code", "ci.department_code")
     .select([
@@ -334,22 +659,26 @@ export async function getUpcomingEvents(limit = 3, now = new Date()): Promise<Ev
       "e.starts_at",
       "e.ends_at",
       "e.venue",
+      "e.body_en",
+      "e.body_ur",
       "e.fee",
       "e.capacity",
       "e.registration_open",
       "e.registration_deadline",
-    ])
-    .where("e.starts_at", ">=", now)
-    .orderBy("e.starts_at")
-    .limit(limit)
-    .execute();
+    ]);
+}
 
-  return rows.map((row) => ({
+type EventRow = Awaited<ReturnType<ReturnType<typeof eventRows>["execute"]>>[number];
+
+function mapEvent(row: EventRow): EventItem {
+  return {
     ...baseOf(row),
     type: row.event_type,
     start: row.starts_at.toISOString(),
     ...(row.ends_at ? { end: row.ends_at.toISOString() } : {}),
     venue: row.venue,
+    ...(row.body_en ? { bodyEn: row.body_en } : {}),
+    ...(row.body_ur ? { bodyUr: row.body_ur } : {}),
     ...(row.fee ? { fee: row.fee } : {}),
     ...(row.capacity !== null ? { capacity: row.capacity } : {}),
     // TINYINT(1) arrives as 0 or 1, not as a boolean.
@@ -357,17 +686,58 @@ export async function getUpcomingEvents(limit = 3, now = new Date()): Promise<Ev
     ...(row.registration_deadline
       ? { registrationDeadline: row.registration_deadline.toISOString() }
       : {}),
-  }));
+  };
+}
+
+/**
+ * Events still to come.
+ *
+ * `starts_at >= now` was a `filter` over every event in memory; as a `WHERE`
+ * against `idx_event_start` it reads only the rows it returns, which is the
+ * difference that matters once the chamber's 180 events a year have
+ * accumulated for a decade.
+ */
+export async function getUpcomingEvents(limit = 3, now = new Date()): Promise<EventItem[]> {
+  const rows = await eventRows(now)
+    .where("e.starts_at", ">=", now)
+    .orderBy("e.starts_at")
+    .limit(limit)
+    .execute();
+
+  return rows.map(mapEvent);
+}
+
+/**
+ * Events that have been and gone, most recent first.
+ *
+ * The calendar needs both halves and they sort in opposite directions: what is
+ * coming reads soonest-first, what has happened reads most-recent-first. Two
+ * functions rather than one with a flag, because the flag would have to change
+ * the `ORDER BY` as well as the `WHERE` and a caller passing `"past"` and
+ * expecting ascending order would get a plausible, wrong page.
+ *
+ * `starts_at < now` and not `COALESCE(ends_at, starts_at) < now`, so a
+ * three-day exhibition leaves the upcoming list the morning it opens. That is
+ * the wrong call for a visitor looking for something to attend today, and it
+ * is what `getUpcomingEvents` has always done; both are fixed together or not
+ * at all, since an event in neither list would vanish.
+ */
+export async function getPastEvents(limit = 12, now = new Date()): Promise<EventItem[]> {
+  const rows = await eventRows(now)
+    .where("e.starts_at", "<", now)
+    .orderBy("e.starts_at", "desc")
+    .limit(limit)
+    .execute();
+
+  return rows.map(mapEvent);
 }
 
 /* -------------------------------------------------------------------------- */
 /* Advocacy                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export async function getAdvocacySpotlight(): Promise<PolicyPosition[]> {
-  const now = new Date();
-
-  const rows = await liveItems("policy_position", now)
+function positionRows(now: Date) {
+  return liveItems("policy_position", now)
     .innerJoin("content_policy_positions as p", "p.content_item_id", "ci.id")
     .innerJoin("departments as d", "d.code", "ci.department_code")
     .select([
@@ -383,20 +753,52 @@ export async function getAdvocacySpotlight(): Promise<PolicyPosition[]> {
       "d.name_en as department_name",
       "p.issue",
       "p.chamber_ask",
+      "p.body_en",
+      "p.body_ur",
       "p.position_status",
-    ])
-    .orderBy("ci.sort_order")
-    .execute();
+    ]);
+}
 
-  const topics = await topicsFor(rows.map((row) => row.id));
+type PositionRow = Awaited<ReturnType<ReturnType<typeof positionRows>["execute"]>>[number];
 
-  return rows.map((row) => ({
+function mapPosition(row: PositionRow, topics: Map<number, TopicSlug[]>): PolicyPosition {
+  return {
     ...baseOf(row),
     issue: row.issue,
     chamberAsk: row.chamber_ask,
+    ...(row.body_en ? { bodyEn: row.body_en } : {}),
+    ...(row.body_ur ? { bodyUr: row.body_ur } : {}),
     positionStatus: row.position_status,
     topics: topics.get(row.id) ?? [],
-  }));
+  };
+}
+
+export async function getAdvocacySpotlight(): Promise<PolicyPosition[]> {
+  const rows = await positionRows(new Date()).orderBy("ci.sort_order").execute();
+  const topics = await topicsFor(rows.map((row) => row.id));
+  return rows.map((row) => mapPosition(row, topics));
+}
+
+/**
+ * Every published position, newest first.
+ *
+ * Ordered by publication date and not by `sort_order`, which is the one
+ * difference from the homepage's spotlight: the spotlight is an editor's pick
+ * of three or four and its order is editorial, while the index is the record
+ * of what the chamber has asked for and the useful question of it is "what has
+ * it asked for lately".
+ *
+ * Not paginated. The chamber's positions are counted in tens, not hundreds --
+ * each one is an issue it is actively pressing, and a list a visitor cannot
+ * read in one page would mean the chamber was pressing too many things to be
+ * taken seriously on any of them.
+ */
+export async function getPolicyPositions(): Promise<PolicyPosition[]> {
+  const rows = await positionRows(new Date())
+    .orderBy("ci.published_at", "desc")
+    .execute();
+  const topics = await topicsFor(rows.map((row) => row.id));
+  return rows.map((row) => mapPosition(row, topics));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -503,6 +905,98 @@ export async function getCommittees(): Promise<Committee[]> {
   }));
 }
 
+/**
+ * Every published portrait, in the order an editor put them in.
+ *
+ * One query for all of them, because the pages that use these ask two
+ * different questions of the same small set — "who holds office" and "is
+ * there a face for this name" — and sixty-odd rows of name, role and image
+ * path is a few kilobytes.
+ */
+export async function getPortraits(): Promise<Portrait[]> {
+  const rows = await liveItems("portrait", new Date())
+    .innerJoin("content_portraits as p", "p.content_item_id", "ci.id")
+    .innerJoin("media_assets as photo", "photo.id", "p.photo_id")
+    .select([
+      "ci.slug",
+      "ci.title_en",
+      "p.role",
+      "p.term",
+      "photo.src",
+      "photo.alt_en",
+      "photo.alt_ur",
+      "photo.width",
+      "photo.height",
+      "photo.caption",
+    ])
+    // `sort_order` governs the office-bearers band and nothing else; the
+    // roster's order is its own prose. Name second so the sixty rows that
+    // share the default order are at least stable between builds.
+    .orderBy("ci.sort_order")
+    .orderBy("ci.title_en")
+    .execute();
+
+  const portraits: Portrait[] = [];
+
+  for (const row of rows) {
+    const photo = imageOf(row);
+    // `photo_id` is NOT NULL and the join is inner, so this cannot happen.
+    // The check is here because `imageOf` is typed to allow it, and a portrait
+    // with no photograph must never reach a page as an empty frame.
+    if (!photo) continue;
+
+    portraits.push({
+      slug: row.slug,
+      nameEn: row.title_en,
+      ...(row.role ? { role: row.role } : {}),
+      ...(row.term ? { term: row.term } : {}),
+      photo,
+    });
+  }
+
+  return portraits;
+}
+
+/**
+ * The people holding office, as the chamber lists them.
+ *
+ * "Has a post written against them" is the whole definition, and it is the
+ * right one: a former president has no post on the old site either — the
+ * roster prints the year instead — so the column being empty is what
+ * distinguishes them, rather than a flag somebody has to remember to unset
+ * when a term ends.
+ */
+export async function getOfficeBearers(): Promise<Portrait[]> {
+  return (await getPortraits()).filter((portrait) => portrait.role !== undefined);
+}
+
+/**
+ * The same portraits, keyed by the name they belong to.
+ *
+ * For the pages that are already printing names — as prose migrated off the
+ * old site, which cannot be rewritten to carry a photograph — and want the
+ * face for each name they come to. A lookup per name, not a query per name.
+ *
+ * `portraitKey` and not the row’s slug is the key, so that the same person
+ * written "Mr. Ali Hassan" on one page and "Ali Hassan" on another is found
+ * both times. A name with no entry is not an error: the caller renders the
+ * name without a face, which is what the page did before any of this existed.
+ *
+ * Two people whose names reduce to one key would collide. The seed refuses to
+ * emit two rows with the same slug and the admin refuses a duplicate, so
+ * reaching that state takes a deliberate edit — and the first row wins, so
+ * the result does not depend on the order MySQL returned them in.
+ */
+export function portraitsByName(portraits: readonly Portrait[]): Map<string, Portrait> {
+  const byName = new Map<string, Portrait>();
+  for (const portrait of portraits) {
+    const key = portraitKey(portrait.nameEn);
+    if (key === "" || byName.has(key)) continue;
+    byName.set(key, portrait);
+  }
+  return byName;
+}
+
 export async function getPartners(): Promise<Partner[]> {
   const rows = await liveItems("partner", new Date())
     .innerJoin("content_partners as p", "p.content_item_id", "ci.id")
@@ -578,6 +1072,20 @@ export const YOUTUBE_CHANNEL_URL =
  * instants, so the first video published from a different timezone no longer
  * sorts into the wrong place.
  */
+/**
+ * Every published video, newest first.
+ *
+ * The same read as `getFeaturedVideos` with a different default, and
+ * deliberately a separate name rather than a bigger `limit` at the call site:
+ * "featured" is what the homepage band asks for and "every one of them" is
+ * what the videos page asks for, and a reader of either page should be able to
+ * tell which they are looking at from the function it calls. If a `featured`
+ * flag is ever added to the type, this is the seam it goes behind.
+ */
+export function getVideos(limit = 24): Promise<VideoItem[]> {
+  return getFeaturedVideos(limit);
+}
+
 export async function getFeaturedVideos(limit = 5): Promise<VideoItem[]> {
   const rows = await liveItems("video", new Date())
     .innerJoin("content_videos as v", "v.content_item_id", "ci.id")
@@ -686,4 +1194,73 @@ export async function getGalleryAlbum(): Promise<GalleryAlbum> {
       return { id: String(row.id), ...image };
     }),
   };
+}
+
+/**
+ * Every published album, most recent occasion first, with its photographs.
+ *
+ * Two queries and not one per album: the images come back in a single read
+ * keyed by album, because the galleries page renders every album on it and
+ * one query per album is the N+1 that turns a page of six albums into seven
+ * round trips. It matters less than usual here — these pages are prerendered,
+ * so the cost is the build's — and it still matters, because the admin's
+ * preview of this page is not prerendered.
+ *
+ * Returns an empty array rather than throwing, unlike `getGalleryAlbum`. The
+ * difference is the consequence: that one feeds a homepage band which renders
+ * its heading unconditionally, so an empty album would ship a headed section
+ * with three blank lines. This feeds a page whose own route carries a heading,
+ * a breadcrumb and a standfirst, and which says plainly that nothing is
+ * published yet.
+ */
+export async function getGalleryAlbums(limit = 24): Promise<GalleryAlbum[]> {
+  const albums = await liveItems("gallery_album", new Date())
+    .innerJoin("content_gallery_albums as a", "a.content_item_id", "ci.id")
+    .select(["ci.id", "ci.slug", "ci.title_en", "a.description", "a.occurred_at"])
+    .orderBy("a.occurred_at", "desc")
+    .limit(limit)
+    .execute();
+
+  if (albums.length === 0) return [];
+
+  const images = await getDb()
+    .selectFrom("content_gallery_images as gi")
+    .innerJoin("media_assets as m", "m.id", "gi.media_id")
+    .select([
+      "gi.id",
+      "gi.album_item_id",
+      "m.src",
+      "m.alt_en",
+      "m.alt_ur",
+      "m.width",
+      "m.height",
+      "m.caption",
+    ])
+    .where(
+      "gi.album_item_id",
+      "in",
+      albums.map((a) => a.id),
+    )
+    .orderBy("gi.sort_order")
+    .execute();
+
+  const byAlbum = new Map<number, GalleryImage[]>();
+  for (const row of images) {
+    const image = imageOf(row);
+    if (!image) {
+      // Unreachable: the join is inner and `src` is NOT NULL.
+      throw new Error(`gallery image ${row.id} has no media row`);
+    }
+    const list = byAlbum.get(row.album_item_id) ?? [];
+    list.push({ id: String(row.id), ...image });
+    byAlbum.set(row.album_item_id, list);
+  }
+
+  return albums.map((album) => ({
+    slug: album.slug,
+    titleEn: album.title_en,
+    description: album.description,
+    occurredAt: album.occurred_at.toISOString(),
+    images: byAlbum.get(album.id) ?? [],
+  }));
 }

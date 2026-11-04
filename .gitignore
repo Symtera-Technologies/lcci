@@ -8,3 +8,15 @@ build/
 next-env.d.ts
 .DS_Store
 tmp/
+
+# `npm run preview` output — rendered page snapshots, for looking at.
+preview/
+
+# A backup archive of the source tree, not a deliverable.
+src.zip
+
+# Scraped pages and assets from lcci.com.pk, kept locally while the import
+# runs. The migrations have consumed it; what matters is in the database and
+# in public/, and 4.5 MB of someone else's rendered HTML is not history worth
+# carrying.
+legacy-import/

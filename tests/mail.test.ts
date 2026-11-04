@@ -13,6 +13,7 @@ import { MAX_ATTEMPTS, backoffMs } from "@/server/mail/outbox";
  */
 const PAYLOADS: Record<TemplateName, unknown> = {
   "sign-in-code": { code: "408213" },
+  "email-verification": { code: "571094" },
   "mail-test": { note: "pre-launch check" },
   "application-deficiency": {
     reference: "LCCI-APP-2026-00001",
@@ -53,6 +54,25 @@ const PAYLOADS: Record<TemplateName, unknown> = {
     amount: "Rs 15,100",
     receivedOn: "28 October 2026",
     instrumentNo: "000412",
+  },
+  "contact-enquiry": {
+    reference: "LC-7K2MQB",
+    name: "Ayesha Rahim",
+    email: "ayesha@shalimartextiles.com.pk",
+    phone: "+92 300 1234567",
+    organisation: "Shalimar Textiles",
+    topic: "Certificates and attestation",
+    message:
+      "We need a certificate of origin attested for a consignment leaving on\nthe 18th. What do you need from us, and how long does it take?",
+    receivedAt: "3 November 2026 at 4:12 pm",
+  },
+  "contact-acknowledgement": {
+    reference: "LC-7K2MQB",
+    name: "Ayesha Rahim",
+    topic: "Certificates and attestation",
+    message:
+      "We need a certificate of origin attested for a consignment leaving on\nthe 18th. What do you need from us, and how long does it take?",
+    telephone: "111-222-499",
   },
   "application-not-approved": {
     reference: "LCCI-APP-2026-00001",

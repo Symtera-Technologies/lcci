@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 /**
  * The content hub.
  *
- * Twelve content types is too many for a flat list, and the obvious grouping —
+ * Fourteen content types is too many for a flat list, and the obvious grouping —
  * by content type — is the one that does not help: an editor does not think
  * "I need to edit a service tile", they think "the homepage is wrong". So the
  * groups below are the parts of the site, and each one names where its items
@@ -33,7 +33,10 @@ interface Group {
   readonly kinds: readonly ContentKind[];
 }
 
-const GROUPS: readonly Group[] = [
+// `as const satisfies` rather than a `readonly Group[]` annotation: the
+// annotation would widen every `kinds` entry back to `ContentKind` and make
+// the exhaustiveness check below vacuous.
+const GROUPS = [
   {
     title: "Newsroom",
     blurb: "What the chamber has said and done. Dated, and ordered by date.",
@@ -47,14 +50,34 @@ const GROUPS: readonly Group[] = [
   {
     title: "Homepage",
     blurb: "The bands a visitor sees first. Short, and ordered by hand.",
-    kinds: ["notice", "key_figure", "service_tile", "testimonial"],
+    // Hero first: it is the top of the page and the thing most often changed.
+    kinds: ["hero", "notice", "key_figure", "service_tile", "testimonial"],
+  },
+  {
+    title: "Site pages",
+    blurb: "The standing pages behind the navigation. One row per address.",
+    kinds: ["page"],
   },
   {
     title: "The chamber",
     blurb: "Who does the work, and who it is done with.",
-    kinds: ["committee", "partner"],
+    kinds: ["committee", "portrait", "partner"],
   },
-];
+] as const satisfies readonly Group[];
+
+/**
+ * Every content type is in a group above, or this file does not compile.
+ *
+ * This hub is the only way into the editor, so a type missing from `GROUPS`
+ * has rows an editor can never reach — the exact failure the comment at the
+ * top of this file describes, and one that no test would otherwise catch
+ * because the type's own list screen keeps working perfectly when nothing
+ * links to it. Adding a content type to `fields.ts` and the `ContentKind`
+ * union now forces a decision about where it belongs.
+ */
+type UngroupedKind = Exclude<ContentKind, (typeof GROUPS)[number]["kinds"][number]>;
+const _everyKindIsReachable: UngroupedKind extends never ? true : UngroupedKind = true;
+void _everyKindIsReachable;
 
 export default async function ContentHubPage() {
   const actor = await requireStaffPage("content.read_draft");

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { getActor, getSession } from "@/server/auth/dal";
+import { MEMBERSHIP_PORTAL_ENABLED } from "@/membership/portal";
 import { signOutStaff } from "./sign-in/actions";
 
 /**
@@ -42,15 +43,26 @@ export default async function AdminLayout({ children }: { children: ReactNode })
             </Link>
 
             <nav aria-label="Admin sections" className="flex flex-wrap gap-x-5 text-sm">
-              {actor?.permissions.has("application.read") && (
-                <Link
-                  href="/admin/applications"
-                  className="font-medium text-ink-700 underline decoration-transparent underline-offset-4 hover:decoration-ink-400"
-                >
-                  Applications
-                </Link>
-              )}
-              {actor?.permissions.has("payment.read") && (
+              {/*
+                Applications, Fees and Promises are hidden while the
+                membership portal is off: no application can reach this site,
+                so all three queues are permanently empty, and an officer
+                staring at an empty queue reasonably concludes the system is
+                broken. The permission checks are kept around them so that
+                turning the portal back on restores the old behaviour exactly.
+                The proxy also redirects the routes, so a bookmark does not
+                get round this. See src/membership/portal.ts.
+              */}
+              {MEMBERSHIP_PORTAL_ENABLED &&
+                actor?.permissions.has("application.read") && (
+                  <Link
+                    href="/admin/applications"
+                    className="font-medium text-ink-700 underline decoration-transparent underline-offset-4 hover:decoration-ink-400"
+                  >
+                    Applications
+                  </Link>
+                )}
+              {MEMBERSHIP_PORTAL_ENABLED && actor?.permissions.has("payment.read") && (
                 <Link
                   href="/admin/payments"
                   className="font-medium text-ink-700 underline decoration-transparent underline-offset-4 hover:decoration-ink-400"
@@ -58,14 +70,15 @@ export default async function AdminLayout({ children }: { children: ReactNode })
                   Fees
                 </Link>
               )}
-              {actor?.permissions.has("application.read") && (
-                <Link
-                  href="/admin/reports/sla"
-                  className="font-medium text-ink-700 underline decoration-transparent underline-offset-4 hover:decoration-ink-400"
-                >
-                  Promises
-                </Link>
-              )}
+              {MEMBERSHIP_PORTAL_ENABLED &&
+                actor?.permissions.has("application.read") && (
+                  <Link
+                    href="/admin/reports/sla"
+                    className="font-medium text-ink-700 underline decoration-transparent underline-offset-4 hover:decoration-ink-400"
+                  >
+                    Promises
+                  </Link>
+                )}
               {/*
                 The other half of the backend. Gated on `content.read_draft`
                 rather than on any content grant, because that permission is
@@ -79,6 +92,20 @@ export default async function AdminLayout({ children }: { children: ReactNode })
                   className="font-medium text-ink-700 underline decoration-transparent underline-offset-4 hover:decoration-ink-400"
                 >
                   Content
+                </Link>
+              )}
+              {/*
+                Beside Content, because the people who hold `enquiry.read`
+                today are the ones who already work here — and because what
+                the public sends in is read, not processed, so it belongs with
+                the reading rather than with the queues.
+              */}
+              {actor?.permissions.has("enquiry.read") && (
+                <Link
+                  href="/admin/enquiries"
+                  className="font-medium text-ink-700 underline decoration-transparent underline-offset-4 hover:decoration-ink-400"
+                >
+                  Enquiries
                 </Link>
               )}
               {/*

@@ -46,6 +46,14 @@ export const PROTECTED_PREFIXES = [
   // most worth hardening. `public: true` in the table below exempts it from
   // the redirect, and the inventory test now demands that declaration.
   "/membership/sign-in",
+  // Here for exactly the reasons the sign-in page is, and one more. It is a
+  // form that collects a name, an email address and a mobile number and then
+  // shows a code box; a shared machine's back/forward cache is the last place
+  // any of that should sit, and `private, no-store` with `Vary: Cookie` is
+  // only applied to protected paths. `public: true` below exempts it from the
+  // redirect, which it must have — a page whose whole purpose is reaching
+  // people with no account cannot require one.
+  "/membership/register",
   "/portal",
 ] as const;
 
@@ -122,6 +130,17 @@ export const ROUTE_POLICY: Record<string, RoutePolicy> = {
     audience: "either",
     permissions: [],
     note: "Member OTP sign-in. Public by necessity, and the one path the proxy redirects an unauthenticated visitor to, so an entry that ever loses `public: true` would make it redirect to itself.",
+  },
+
+  "/membership/register": {
+    public: true,
+    // `either`, like sign-in: a staff account that lands here is shown the
+    // page rather than refused, and the audience only governs who may *act*.
+    // Nothing on this page acts as an authenticated user — it is the page that
+    // creates the account.
+    audience: "either",
+    permissions: [],
+    note: "Opening a member account. Public by necessity: before it existed, the only portal users were the ones a developer script had created, so a firm that had never dealt with the Chamber could not reach the wizard at all. Creates the row at status 'invited', which cannot sign in until the emailed code comes back.",
   },
 
   "/membership/apply": {
@@ -332,6 +351,16 @@ export const ROUTE_POLICY: Record<string, RoutePolicy> = {
     // read but not change is a legitimate state, and the same page serves it.
     permissions: ["content.read_draft"],
     note: "One item, open for editing. Addressed by id and not by slug, because the slug is the editable public address. Saving is guarded on the version the form was rendered from, so two editors with the same release open cannot silently overwrite each other. Not found and not-your-department are both a 404, so the route is not an existence oracle for embargoed copy.",
+  },
+
+  "/admin/enquiries": {
+    audience: "staff",
+    // `enquiry.read` and deliberately not a content grant. Editing the
+    // chamber's pages and reading the public's correspondence are different
+    // jobs, and a department editor brought in to fix the trade pages should
+    // not acquire an inbox along with the keys.
+    permissions: ["enquiry.read"],
+    note: "What the public sent through the contact form, newest first. A record and a delivery check, not a workflow: replies happen in the chamber's own inbox, and the column that earns the screen is the one saying whether the notification actually left.",
   },
 
   "/admin/media": {

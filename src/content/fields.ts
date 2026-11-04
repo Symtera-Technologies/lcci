@@ -67,6 +67,15 @@ export interface ContentForm {
   /** What `content_items.title_en` is called on this type's screen. */
   readonly titleLabel: string;
   readonly titleHelp?: string;
+  /**
+   * Replaces the default help on the address field.
+   *
+   * One type needs it. For every other type the slug either *is* the last part
+   * of a public URL or is an internal identifier, and the two default
+   * sentences cover both. A `page`'s slug is neither: the URL is fixed by the
+   * route file, and the slug is how the route finds this row.
+   */
+  readonly slugHelp?: string;
   /** Whether this type carries topic tags. */
   readonly hasTopics: boolean;
   /**
@@ -550,6 +559,255 @@ export const CONTENT_FORMS: Record<ContentKind, ContentForm> = {
       },
     ],
   },
+
+  page: {
+    kind: "page",
+    plural: "Pages",
+    singular: "Page",
+    table: "content_pages",
+    titleLabel: "Title",
+    titleHelp:
+      "The heading a visitor reads. It replaces the one the route carries, so write the real title here rather than a note to yourself.",
+    // The one thing an editor cannot guess and cannot see go wrong: a slug
+    // that matches no route leaves the page it was written for permanently
+    // empty, and there is no error anywhere, because "nothing published" and
+    // "published under the wrong address" look identical from the page's side.
+    slugHelp:
+      "The page's web address with the slashes turned into dashes, and no leading dash: /about/history is about-history, and /about is about. It is not a new address — the page already exists — so getting it wrong means the page you wrote stays blank.",
+    hasTopics: false,
+    // A page is a landing destination, so it is worth its own search snippet
+    // and share image.
+    hasSeo: true,
+    datedPublicly: false,
+    hasSortOrder: false,
+    fields: [
+      {
+        name: "standfirst_en",
+        label: "Standfirst",
+        kind: "textarea",
+        max: 600,
+        help: "One or two sentences under the heading. Also used as this page\u2019s description where it is listed on a section index, so write it to stand on its own.",
+      },
+      { name: "standfirst_ur", label: "Standfirst (Urdu)", kind: "textarea", max: 800 },
+      {
+        name: "meta_en",
+        label: "Heading facts",
+        kind: "text",
+        max: 120,
+        help: "Two or three short standing facts, shown as small chips beside the heading on the pages designed for them \u2014 separate them with the | character, as in Established 1923 | Lahore. Facts, not a summary: there is already a standfirst above for that. Leave it empty and the page renders without them.",
+      },
+      { name: "meta_ur", label: "Heading facts (Urdu)", kind: "text", max: 160 },
+      {
+        name: "body_en",
+        label: "Body",
+        kind: "richtext",
+        help: "Headings, lists, tables and links. Anything the toolbar cannot produce is removed when you save \u2014 including formatting pasted in from Word.",
+      },
+      { name: "body_ur", label: "Body (Urdu)", kind: "richtext" },
+      {
+        name: "hero_image_id",
+        label: "Banner image",
+        kind: "media",
+        help: "Optional, and most of these pages want none. A page with no banner renders without one rather than falling back to a placeholder.",
+      },
+    ],
+  },
+
+  // Appended, in step with the ENUM in 0022, so the two lists read in the same
+  // order. The admin groups it under "Homepage" and puts it first there.
+  hero: {
+    kind: "hero",
+    plural: "Homepage heroes",
+    singular: "Homepage hero",
+    table: "content_heroes",
+    titleLabel: "Label",
+    titleHelp:
+      "For this list only. Visitors read the headline, not this — so name it for the version it is, such as \"Autumn 2026 — trade mission\".",
+    hasTopics: false,
+    hasSeo: false,
+    datedPublicly: false,
+    hasSortOrder: false,
+    fields: [
+      {
+        name: "badge_en",
+        label: "Badge",
+        kind: "text",
+        required: true,
+        max: 120,
+        help: "The small capitalised line above the headline.",
+      },
+      {
+        name: "headline_en",
+        label: "Headline",
+        kind: "text",
+        required: true,
+        max: 300,
+        help: "The page’s one h1. Around sixty characters reads best; much longer and it breaks mid-word on a phone.",
+      },
+      {
+        name: "headline_highlight_en",
+        label: "Words to highlight",
+        kind: "text",
+        max: 120,
+        help: "A phrase copied out of the headline above, which renders in brand green. It must match exactly, including punctuation and capitals; if it does not appear in the headline the headline simply renders plain.",
+      },
+      { name: "headline_ur", label: "Headline (Urdu)", kind: "text", max: 400 },
+      {
+        name: "subhead_en",
+        label: "Standfirst",
+        kind: "textarea",
+        required: true,
+        max: 600,
+        help: "Two or three lines saying what a visitor can do here.",
+      },
+      { name: "subhead_ur", label: "Standfirst (Urdu)", kind: "textarea", max: 800 },
+
+      {
+        name: "primary_cta_label_en",
+        label: "First button",
+        kind: "text",
+        required: true,
+        max: 80,
+      },
+      {
+        name: "primary_cta_href",
+        label: "First button links to",
+        kind: "text",
+        required: true,
+        max: 300,
+        help: "A path on this site, such as /membership/apply.",
+      },
+      {
+        name: "secondary_cta_label_en",
+        label: "Second button",
+        kind: "text",
+        max: 80,
+        help: "Optional. Leave the label empty and the second button is not rendered at all.",
+      },
+      {
+        name: "secondary_cta_href",
+        label: "Second button links to",
+        kind: "text",
+        max: 300,
+      },
+
+      {
+        name: "member_prompt_en",
+        label: "Members’ line",
+        kind: "text",
+        max: 160,
+        help: "The quiet line under the buttons, for people who already have an account — for example “Already a member?”.",
+      },
+      {
+        name: "member_link_label_en",
+        label: "Members’ link",
+        kind: "text",
+        max: 80,
+      },
+      {
+        name: "member_link_href",
+        label: "Members’ link goes to",
+        kind: "text",
+        max: 300,
+        help: "/membership/sign-in is the portal sign-in. The whole line is omitted unless all three parts are filled in.",
+      },
+
+      {
+        name: "caption_en",
+        label: "Caption on the main photograph",
+        kind: "text",
+        max: 120,
+        help: "Names the occasion, such as “Annual General Meeting”. Not a description of the image — that is the photograph’s own alt text in the media library.",
+      },
+      {
+        name: "stat_value_en",
+        label: "Figure",
+        kind: "text",
+        max: 12,
+        help: "The large number on the second chip, as text so that “100+” is possible.",
+      },
+      {
+        name: "stat_label_en",
+        label: "What the figure counts",
+        kind: "text",
+        max: 80,
+        help: "Shown beside the figure. Both are needed, or neither is shown.",
+      },
+
+      {
+        name: "lead_image_id",
+        label: "Main photograph",
+        kind: "media",
+        required: true,
+        help: "The largest frame, and the first image the page loads. Landscape, roughly 16:10.",
+      },
+      {
+        name: "behind_image_id",
+        label: "Photograph behind",
+        kind: "media",
+        required: true,
+        help: "The small frame set back at the top right. Roughly 4:3.",
+      },
+      {
+        name: "front_image_id",
+        label: "Photograph in front",
+        kind: "media",
+        required: true,
+        help: "The frame nearest the reader, bottom right. Roughly 3:2. All three are required: the composition’s depth depends on there being exactly three.",
+      },
+    ],
+  },
+
+  // Appended, in step with the ENUM in 0038.
+  //
+  // A portrait has no body and no standfirst, which makes it the smallest type
+  // here: a name, a face, and two optional captions. That is deliberate. The
+  // names, years and firms of the chamber’s former presidents are already on
+  // /about/past-leadership as prose migrated off the old site, and those words
+  // cannot be rewritten — so this type adds the photograph beside a name and
+  // does not become a second, divergent copy of the roster.
+  portrait: {
+    kind: "portrait",
+    plural: "People",
+    singular: "Person",
+    table: "content_portraits",
+    titleLabel: "Name",
+    titleHelp:
+      "The person’s name, spelled exactly as the pages that name them do. That spelling is how a page finds the right photograph, so “Mian Abuzar Shad” and “Mian Abu Zar Shad” are two different people as far as this is concerned.",
+    slugHelp:
+      "Filled in from the name. Not a web address — a person has no page of their own — but it is what links the photograph to the name, so leave the suggested one alone unless two people share a name.",
+    hasTopics: false,
+    // No page of their own, so nothing to write a search snippet for.
+    hasSeo: false,
+    datedPublicly: false,
+    // Governs the office-bearers band on /about/leadership and nothing else:
+    // the roster of former presidents is ordered by its own prose, which is
+    // migrated text and not reorderable from here.
+    hasSortOrder: true,
+    fields: [
+      {
+        name: "photo_id",
+        label: "Photograph",
+        kind: "media",
+        required: true,
+        help: "A head-and-shoulders portrait, taller than it is wide. Required: the only reason for one of these rows to exist is the picture.",
+      },
+      {
+        name: "role",
+        label: "Post",
+        kind: "text",
+        max: 80,
+        help: "The post as the chamber writes it — President, Senior Vice President. Leave it empty for a former president: the pages print the year instead, and “Former President” is a title nobody published.",
+      },
+      {
+        name: "term",
+        label: "Year",
+        kind: "text",
+        max: 40,
+        help: "The term as the roster prints it, such as 2023-24. Text and not a date, because a third of these have no year and several give one year for a term that spanned two.",
+      },
+    ],
+  },
 };
 
 export const CONTENT_KINDS = Object.keys(CONTENT_FORMS) as ContentKind[];
@@ -596,6 +854,55 @@ export function slugify(title: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 160)
     .replace(/-+$/g, "");
+}
+
+/**
+ * The chips under a page heading, from the one column that stores them.
+ *
+ * Pipe-separated, for the reasons in `migrations/0039_page_meta.sql`. Blanks
+ * are dropped here rather than stored, so `Established 1923 | | Lahore` and a
+ * trailing pipe both behave, and a value of nothing but separators yields an
+ * empty list — which the caller turns into *no chips* rather than three empty
+ * ones.
+ *
+ * Trimmed because an editor typing `a | b` means two facts and not `" b"`.
+ */
+export function splitMeta(value: string | null | undefined): readonly string[] {
+  if (!value) return [];
+  return value
+    .split("|")
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+}
+
+/**
+ * Titles that are not part of a name, for matching one spelling to another.
+ *
+ * Deliberately short. "Mian", "Sheikh", "Syed", "Malik", "Rana" and
+ * "Chaudhry" all look like honorifics and are routinely part of the name —
+ * stripping them would collapse two different people onto one photograph,
+ * which is a worse failure than showing no photograph at all. So only the
+ * forms that are never a name are here.
+ */
+const HONORIFIC = /^(?:mr|mrs|ms|miss|dr|prof|professor|engr|engineer|er|hon|haji|hajji|alhaj|al-haj|hafiz|mian-?sahib)\.?$/i;
+
+/**
+ * The key a photograph is found by, from a person’s name.
+ *
+ * The pages that show these faces print the names as prose migrated off the
+ * old site, and the same person is written "Mr. Ali Hassan" on one page and
+ * "Ali Hassan" on another. Slugifying alone would make those two people; this
+ * drops the title first so they are one.
+ *
+ * It is not the row’s slug. The slug is a stable identifier an editor can
+ * see and change; this is a comparison key, computed the same way on both
+ * sides of the match, so changing how it works never corrupts stored data.
+ */
+export function portraitKey(name: string): string {
+  const words = name
+    .split(/\s+/)
+    .filter((word) => word !== "" && !HONORIFIC.test(word));
+  return slugify(words.join(" "));
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -775,9 +1082,11 @@ export function parentFields(kind: ContentKind): readonly FieldSpec[] {
       kind: "slug",
       required: true,
       max: 160,
-      help: form.hasSeo
-        ? "The last part of the public web address. Changing it after publication breaks every link to this page."
-        : "An identifier. Not shown to visitors, but it has to be unique.",
+      help:
+        form.slugHelp ??
+        (form.hasSeo
+          ? "The last part of the public web address. Changing it after publication breaks every link to this page."
+          : "An identifier. Not shown to visitors, but it has to be unique."),
     },
     {
       name: "department_code",

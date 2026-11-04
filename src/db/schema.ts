@@ -429,6 +429,29 @@ export interface CspReportsTable {
   received_at: Instant;
 }
 
+/**
+ * An enquiry from the website's contact form.
+ *
+ * Written before the notification is queued, so an enquiry survives a mail
+ * outage. See `migrations/0044_contact_messages.sql` for why that ordering is
+ * the whole point of the table.
+ */
+export interface ContactMessagesTable {
+  id: Generated<number>;
+  reference: string;
+  topic: string;
+  sender_name: string;
+  sender_email: string;
+  sender_phone: string | null;
+  organisation: string | null;
+  body: string;
+  locale: Generated<string>;
+  ip_hash: string | null;
+  user_agent_hash: string | null;
+  outbox_id: number | null;
+  created_at: Instant;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Membership: reference data                                                 */
 /* -------------------------------------------------------------------------- */
@@ -1088,7 +1111,10 @@ export type ContentKind =
   | "partner"
   | "testimonial"
   | "video"
-  | "gallery_album";
+  | "gallery_album"
+  | "hero"
+  | "page"
+  | "portrait";
 
 /** The editorial workflow. Mirrors `BaseContent["status"]` exactly. */
 export type ContentStatus = "draft" | "in_review" | "published" | "archived";
@@ -1317,6 +1343,86 @@ export interface ContentGalleryAlbumsTable {
   occurred_at: InstantSet;
 }
 
+/**
+ * The homepage hero.
+ *
+ * Which row is live is decided by `content_items.published_at`, not by a flag
+ * here — see `migrations/0022_content_hero.sql` for why.
+ */
+/**
+ * A page of prose, addressed by its slug.
+ *
+ * Which URL it appears at is a route file's decision, not a column here: see
+ * `migrations/0024_content_page.sql`.
+ */
+export interface ContentPagesTable {
+  content_item_id: number;
+  /** The line under the heading; also the description on a section index. */
+  standfirst_en: string | null;
+  standfirst_ur: string | null;
+  /**
+   * Two or three short standing facts for the chips beside a page heading,
+   * pipe-separated — `Established 1923 | Lahore`.
+   *
+   * Delimited rather than a satellite table, and pipes rather than commas,
+   * for the reasons `migrations/0039_page_meta.sql` sets out. Split and
+   * trimmed by `splitMeta` in `src/content/fields.ts`; blanks are dropped
+   * there, so a trailing pipe is harmless.
+   */
+  meta_en: string | null;
+  meta_ur: string | null;
+  /** Sanitised HTML, sanitised on write. Nullable: pages are drafted empty. */
+  body_en: string | null;
+  body_ur: string | null;
+  hero_image_id: number | null;
+}
+
+/**
+ * A photograph of a named person, keyed by the name.
+ *
+ * `content_items.title_en` is the person's name as the chamber writes it and
+ * the slug is that name slugified, because the pages that show these faces are
+ * already printing the names as migrated prose that cannot be rewritten — see
+ * `migrations/0038_content_portrait.sql`. The join is name to name.
+ */
+export interface ContentPortraitsTable {
+  content_item_id: number;
+  /** "President", "Senior Vice President". Null for a former president. */
+  role: string | null;
+  /** The term as the roster prints it, "2023-24". A third have none. */
+  term: string | null;
+  /** NOT NULL: a portrait with no photograph is a row with no purpose. */
+  photo_id: number;
+}
+
+export interface ContentHeroesTable {
+  content_item_id: number;
+  badge_en: string;
+  headline_en: string;
+  headline_ur: string | null;
+  /** A phrase inside `headline_en`, rendered in brand green. */
+  headline_highlight_en: string | null;
+  subhead_en: string;
+  subhead_ur: string | null;
+  primary_cta_label_en: string;
+  primary_cta_href: string;
+  /** Nullable together with its href: a one-button hero is a valid choice. */
+  secondary_cta_label_en: string | null;
+  secondary_cta_href: string | null;
+  member_prompt_en: string | null;
+  member_link_label_en: string | null;
+  member_link_href: string | null;
+  /** The glass chip on the lead photograph. */
+  caption_en: string | null;
+  /** A string, not a number: "103" this year, possibly "100+" next. */
+  stat_value_en: string | null;
+  stat_label_en: string | null;
+  /** NOT NULL: the staged composition is three planes or it is a mistake. */
+  lead_image_id: number;
+  behind_image_id: number;
+  front_image_id: number;
+}
+
 export interface ContentGalleryImagesTable {
   id: Generated<number>;
   album_item_id: number;
@@ -1389,6 +1495,7 @@ export interface Database {
   rate_limit_counters: RateLimitCountersTable;
   rate_limit_events: RateLimitEventsTable;
   csp_reports: CspReportsTable;
+  contact_messages: ContactMessagesTable;
 
   departments: DepartmentsTable;
   content_topics: ContentTopicsTable;
@@ -1407,6 +1514,9 @@ export interface Database {
   content_testimonials: ContentTestimonialsTable;
   content_videos: ContentVideosTable;
   content_gallery_albums: ContentGalleryAlbumsTable;
+  content_heroes: ContentHeroesTable;
+  content_pages: ContentPagesTable;
+  content_portraits: ContentPortraitsTable;
   content_gallery_images: ContentGalleryImagesTable;
 }
 

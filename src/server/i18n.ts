@@ -57,6 +57,17 @@ const MESSAGES = {
     en: "If that email address or membership number is registered, a sign-in code is on its way. It expires in 10 minutes.",
     ur: null,
   },
+  /**
+   * Said whether the address was registered a second ago, was already on the
+   * register, or belongs to a member of staff. The route does the same work in
+   * all three cases and takes the same time over it — the registration form is
+   * the one page an attacker arrives at already holding the thing it could
+   * otherwise be made to confirm.
+   */
+  "auth.register.sent": {
+    en: "A six-digit code is on its way to that email address. Enter it below to confirm the address and open your application. It expires in 10 minutes.",
+    ur: null,
+  },
   "auth.code.invalid": {
     en: "That code is not right, or it has expired. Request a new one.",
     ur: null,
@@ -86,6 +97,14 @@ const MESSAGES = {
   },
   "email.signInCode.body": {
     en: "Your sign-in code is {code}.\n\nIt expires in 10 minutes and can be used once. If you did not ask for it, you can ignore this message — nobody can sign in without it.\n\nLahore Chamber of Commerce & Industry",
+    ur: null,
+  },
+  "email.verifyEmail.subject": {
+    en: "Confirm your email address: {code}",
+    ur: null,
+  },
+  "email.verifyEmail.body": {
+    en: "Your confirmation code is {code}.\n\nEnter it on the Chamber's website to confirm this email address and open your membership application. It expires in 10 minutes and can be used once.\n\nIf you did not ask for it, you can ignore this message — an account cannot be used until this code is entered, and nobody can enter it without this email.\n\nLahore Chamber of Commerce & Industry",
     ur: null,
   },
   "email.footer.doNotReply": {

@@ -30,6 +30,19 @@ export interface RenderedMessage {
   subject: string;
   text: string;
   html?: string;
+  /**
+   * Where a reply should go, when that is not the sending mailbox.
+   *
+   * Set by exactly one template today — the contact enquiry, where the whole
+   * point is that a member of staff can hit reply and reach the person who
+   * wrote in. Every other message here is sent from a no-reply mailbox and
+   * leaves this unset.
+   *
+   * It is a header, so it is validated in `renderTemplate` the same way the
+   * subject is: a newline in it is header injection, and the address reaching
+   * it came from a public form.
+   */
+  replyTo?: string;
 }
 
 interface TemplateDefinition<P> {
@@ -77,6 +90,37 @@ export const TEMPLATES = {
         subject: t("email.signInCode.subject", { code: payload.code }, locale),
         text: [
           t("email.signInCode.body", { code: payload.code }, locale),
+          "",
+          t("email.footer.doNotReply", undefined, locale),
+        ].join("\n"),
+      };
+    },
+  }),
+
+  /**
+   * The code that confirms a new applicant's email address.
+   *
+   * Sent synchronously, like the sign-in code and for the same reason: the
+   * registration page must not say "a code is on its way" when the provider
+   * refused the message.
+   *
+   * Worded to be true of both accounts it is ever sent to — one created a
+   * second ago, and one that has existed for a year whose owner typed their
+   * address into the registration form instead of the sign-in form. "Welcome
+   * to the Chamber" would be false for the second and would also, read
+   * carefully, tell whoever typed the address which of the two it was. Carries
+   * the code and nothing else: no name, no firm, no membership number, so a
+   * leaked queue row after expiry discloses nothing at all.
+   */
+  "email-verification": template<Localised & { code: string }>({
+    stream: "transactional",
+    trigger: "Someone asked to open or reach a membership account with this address.",
+    render(payload) {
+      const locale = localeOf(payload);
+      return {
+        subject: t("email.verifyEmail.subject", { code: payload.code }, locale),
+        text: [
+          t("email.verifyEmail.body", { code: payload.code }, locale),
           "",
           t("email.footer.doNotReply", undefined, locale),
         ].join("\n"),
@@ -436,6 +480,129 @@ export const TEMPLATES = {
   }),
 
   /**
+   * An enquiry from the website's contact form, sent to the chamber.
+   *
+   * The whole message the visitor wrote is in the body. Not "a new enquiry has
+   * been received, sign in to read it": the recipient is a secretariat inbox,
+   * the useful action is a reply, and a notification that requires opening an
+   * admin panel to find out what somebody asked is a notification that gets
+   * filed and forgotten.
+   *
+   * `Reply-To` is the sender's address, which is the feature. A member of
+   * staff reads the enquiry and presses reply, and it reaches the person who
+   * wrote it rather than the no-reply mailbox the site sends from. That also
+   * means this is the one template whose header carries a value from a public
+   * form, which is why `renderTemplate` validates it.
+   *
+   * Nothing the visitor typed reaches the subject line — only the chamber's
+   * own topic label and the reference. The name would be genuinely useful
+   * there and is in the first line of the body instead, because a subject is
+   * a header and the body is not.
+   */
+  "contact-enquiry": template<{
+    reference: string;
+    name: string;
+    email: string;
+    phone: string | null;
+    organisation: string | null;
+    topic: string;
+    message: string;
+    receivedAt: string;
+  }>({
+    stream: "transactional",
+    trigger: "A visitor submitted the contact form on the website.",
+    render(payload) {
+      const lines: string[] = [
+        `${payload.name} wrote to the Chamber through the website.`,
+        "",
+        `Topic: ${payload.topic}`,
+        `Name: ${payload.name}`,
+        `Email: ${payload.email}`,
+      ];
+
+      if (payload.phone) lines.push(`Phone: ${payload.phone}`);
+      if (payload.organisation) lines.push(`Organisation: ${payload.organisation}`);
+
+      lines.push(
+        `Received: ${payload.receivedAt}`,
+        `Reference: ${payload.reference}`,
+        "",
+        "--",
+        "",
+        payload.message,
+        "",
+        "--",
+        "",
+        "Reply to this message and your answer goes to the sender. The address",
+        "above was not verified, so treat it the way you would treat a letter:",
+        "it is what the sender typed, not proof of who they are.",
+      );
+
+      const reference = payload.reference.replace(/[\r\n]+/g, " ").slice(0, 40);
+
+      return {
+        subject: `Website enquiry — ${payload.topic} (${reference})`,
+        text: lines.join("\n"),
+        replyTo: payload.email,
+      };
+    },
+  }),
+
+  /**
+   * The visitor's copy of what they sent.
+   *
+   * It quotes their own message back, which is the part that matters: it is
+   * the only record they have that the chamber received anything, and a bare
+   * "thank you, we will be in touch" is indistinguishable from the
+   * acknowledgement every website sends and nobody believes.
+   *
+   * It promises a reply from a person and gives no time, because no service
+   * standard exists for this inbox and inventing one would be the chamber
+   * committing to something nobody has agreed to. The switchboard is offered
+   * for anything urgent, which is the honest answer to "how long will this
+   * take".
+   */
+  "contact-acknowledgement": template<
+    Localised & {
+      reference: string;
+      name: string;
+      topic: string;
+      message: string;
+      telephone: string;
+    }
+  >({
+    stream: "transactional",
+    trigger: "A visitor submitted the contact form; this is their receipt.",
+    render(payload) {
+      const reference = payload.reference.replace(/[\r\n]+/g, " ").slice(0, 40);
+
+      return {
+        subject: `We received your message — ${reference}`,
+        text: [
+          `Dear ${payload.name},`,
+          "",
+          "The Lahore Chamber of Commerce & Industry has received your message.",
+          "A member of staff will read it and write back to this address.",
+          "",
+          `Your reference: ${reference}`,
+          `Topic: ${payload.topic}`,
+          "",
+          "This is what you sent:",
+          "",
+          // Indented, so it reads as a quotation of theirs rather than as
+          // something the chamber is saying back to them.
+          ...payload.message.split(/\r?\n/).map((line) => (line ? `  ${line}` : "")),
+          "",
+          `If it is urgent, telephone the Chamber on ${payload.telephone} rather`,
+          "than waiting for a reply to this message.",
+          "",
+          t("email.footer.doNotReply", undefined, localeOf(payload)),
+        ].join("\n"),
+      };
+    },
+  }),
+
+  /**
    * A deliverability probe.
    *
    * Exists because "is mail working?" must be answerable without triggering a
@@ -509,10 +676,34 @@ export function renderTemplate(
     throw new Error(`Rendered subject for ${safeName(name)} contains a newline`);
   }
 
+  // The same rule for Reply-To, and here it is a fix rather than insurance:
+  // the only template that sets one fills it from a public form.
+  if (rendered.replyTo !== undefined && !isHeaderSafeAddress(rendered.replyTo)) {
+    throw new Error(`Rendered Reply-To for ${safeName(name)} is not a usable address`);
+  }
+
   return { ...rendered, stream: definition.stream };
 }
 
 /** Template names reach error messages; a hand-edited row's does not. */
 function safeName(name: string): string {
   return /^[a-z0-9-]{1,60}$/.test(name) ? name : "<invalid>";
+}
+
+/**
+ * A bare address, with nothing in it that could become a second header.
+ *
+ * Deliberately narrower than what RFC 5322 permits — no display name, no
+ * quoted local part, no comments. The only addresses that reach here came out
+ * of a form field that the action has already validated as an email address,
+ * so everything this rejects is either an attack or a bug, and a Reply-To the
+ * chamber's staff cannot click is worth less than one that is definitely not
+ * a smuggled `Bcc:`.
+ */
+function isHeaderSafeAddress(value: string): boolean {
+  return (
+    value.length <= 254 &&
+    !/[\r\n\t<>,;"]/.test(value) &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value)
+  );
 }

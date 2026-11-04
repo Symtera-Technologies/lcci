@@ -1,7 +1,4 @@
 import type { Metadata } from "next";
-import { Header } from "@/components/site/header";
-import { Footer } from "@/components/site/footer";
-import { NoticeStrip } from "@/components/home/notice-strip";
 import { HeroV2 } from "@/components/v2/hero";
 import { BentoServices } from "@/components/v2/bento-services";
 import { FiguresV2 } from "@/components/v2/figures";
@@ -13,6 +10,8 @@ import { AdvocacyV2 } from "@/components/v2/advocacy";
 import { CommitteesV2 } from "@/components/v2/committees";
 import { TestimonialsV2 } from "@/components/v2/testimonials";
 import { ClosingBand } from "@/components/v2/closing-band";
+import { SOCIAL } from "@/components/site/nav-data";
+import { CHAMBER } from "@/content/chamber";
 
 /**
  * The homepage — the "Chamber in Depth" direction.
@@ -28,8 +27,8 @@ import { ClosingBand } from "@/components/v2/closing-band";
  * repository, which is what should be shared when the question is "which
  * layout?" — it is also why this swap is two files and no component changes.
  *
- * `NoticeStrip` is the one exception and belongs to neither variant: it is the
- * chamber's own alert band, read from the `notice` content type.
+ * The header, the alert band and the footer are not here: they are the
+ * `(site)` group's layout, shared with every other public page.
  */
 
 export const metadata: Metadata = {
@@ -53,25 +52,27 @@ function OrganizationSchema() {
   const schema = {
     "@context": "https://schema.org",
     "@type": "Organization",
-    name: "Lahore Chamber of Commerce & Industry",
-    alternateName: "LCCI",
-    foundingDate: "1923",
+    name: CHAMBER.name,
+    alternateName: CHAMBER.shortName,
+    foundingDate: String(CHAMBER.foundedYear),
     url: "https://lcci.com.pk",
-    telephone: "+92-111-222-499",
+    telephone: CHAMBER.telephone.published,
     address: {
       "@type": "PostalAddress",
-      streetAddress: "11 Shahrah-e-Aiwan-e-Tijarat",
-      addressLocality: "Lahore",
-      addressRegion: "Punjab",
-      postalCode: "54000",
-      addressCountry: "PK",
+      streetAddress: CHAMBER.address.street,
+      addressLocality: CHAMBER.address.locality,
+      // No `addressRegion` and no `postalCode`: LCCI publishes neither, and
+      // both were invented here until they were checked against the live
+      // site. An omitted property is valid schema.org; a guessed one is a
+      // wrong fact asserted in a form built to be trusted.
+      addressCountry: CHAMBER.address.countryCode,
     },
-    sameAs: [
-      "https://www.facebook.com/LCCIOfficial",
-      "https://x.com/LCCI_Official",
-      "https://www.instagram.com/lcci_official",
-      "https://www.youtube.com/@LCCIOfficial",
-    ],
+    // The same list the footer renders, so a changed or added account is one
+    // edit rather than two — and the two can never disagree, which for
+    // `sameAs` matters: it is how a search engine reconciles the chamber's
+    // profiles with this site, and a stale entry there points at an account
+    // LCCI may no longer control.
+    sameAs: SOCIAL.map((s) => s.href),
   };
 
   return (
@@ -86,8 +87,6 @@ export default function HomePage() {
   return (
     <>
       <OrganizationSchema />
-      <NoticeStrip />
-      <Header />
 
       <main id="main">
         <HeroV2 />
@@ -102,8 +101,6 @@ export default function HomePage() {
         <TestimonialsV2 />
         <ClosingBand />
       </main>
-
-      <Footer />
     </>
   );
 }

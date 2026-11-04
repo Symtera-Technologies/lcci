@@ -54,6 +54,21 @@ export interface MigrationStatus {
   state: "applied" | "pending" | "checksum-mismatch" | "missing-file";
   appliedAt?: Date;
   appliedBy?: string;
+  /**
+   * Both checksums, on a mismatch only.
+   *
+   * Reported because "the file and the database disagree" leaves the one
+   * question that matters unanswered: *which side* changed. With the recorded
+   * checksum and the file's own in front of you, comparing the file against
+   * the copy in version control settles it in one step — if the file hashes to
+   * what the repository holds, the ledger was written from a different copy;
+   * if it does not, the file on this machine is the problem and the fix is a
+   * re-upload rather than anything touching the database.
+   *
+   * This cost a production deploy an hour to work out by hand, on a host where
+   * the database is not reachable from a developer's machine.
+   */
+  checksums?: { recorded: string; file: string };
 }
 
 export interface MigrationResult {
@@ -231,12 +246,17 @@ export async function migrationStatus(): Promise<MigrationStatus[]> {
   const statuses: MigrationStatus[] = files.map((file) => {
     const applied = ledger.get(file.version);
     if (!applied) return { version: file.version, name: file.name, state: "pending" };
+
+    const matches = applied.checksum === file.checksum;
     return {
       version: file.version,
       name: file.name,
-      state: applied.checksum === file.checksum ? "applied" : "checksum-mismatch",
+      state: matches ? "applied" : "checksum-mismatch",
       appliedAt: applied.applied_at,
       appliedBy: applied.applied_by,
+      ...(matches
+        ? {}
+        : { checksums: { recorded: applied.checksum, file: file.checksum } }),
     };
   });
 
@@ -278,7 +298,19 @@ export async function runMigrations(appliedBy: string): Promise<MigrationResult>
             `(${applied.applied_at.toISOString()} by ${applied.applied_by}).\n` +
             "Applied migrations are immutable. Write a new migration instead — " +
             "editing this one means the file and the database disagree and " +
-            "nothing will tell you which is right.",
+            "nothing will tell you which is right.\n\n" +
+            // Both hashes, because the sentence above describes the problem and
+            // not how to tell which side caused it. The file may be the damaged
+            // one — an interrupted upload, an editor that rewrote it — in which
+            // case nothing is wrong with the database and no new migration is
+            // called for, only a re-upload. Line endings are normalised before
+            // hashing, so a CRLF checkout is never the explanation.
+            `  recorded in the database  ${applied.checksum}\n` +
+            `  this file on disk         ${file.checksum}\n` +
+            `  sha256sum migrations/${file.filename}\n` +
+            "  Whichever of the two that hash matches is the intact side: the " +
+            "repository's copy means the ledger came from elsewhere, and " +
+            "anything else means restore the file and re-run.",
         );
       }
     }

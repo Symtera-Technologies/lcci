@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getSession } from "@/server/auth/dal";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { SignInForm } from "@/components/membership/sign-in-form";
-import { DEFAULT_DESTINATION, safeDestination } from "@/server/auth/destination";
+import { safeDestination } from "@/server/auth/destination";
 import { signOut } from "./actions";
 
 export const metadata: Metadata = {
@@ -72,16 +72,21 @@ export default async function SignInPage({
           </div>
 
           <div className="mt-10 border-t border-stone-200 pt-6 text-[0.8125rem] leading-relaxed text-stone-600">
+            {/* The link that used to be here pointed at the wizard, which
+                redirects anyone without a session straight back to this page —
+                so the only route onwards for a firm with no account was a
+                loop. It now points at the page that makes one. */}
             <p>
-              Not a member yet?{" "}
+              No account yet?{" "}
               <Link
-                href={DEFAULT_DESTINATION}
+                href={`/membership/register?next=${encodeURIComponent(next)}`}
                 className="font-medium text-brand-700 underline decoration-brand-700/40 underline-offset-4 hover:decoration-brand-700"
               >
-                Apply for membership
+                Create one
               </Link>{" "}
-              — you will be asked to sign in before the form opens, so that your
-              part-finished application is saved to you and nobody else.
+              — three details and a code to your email address, and the membership
+              form opens straight afterwards. Your part-finished answers are then
+              saved to you and nobody else.
             </p>
             <p className="mt-3">
               If the code does not arrive, check the junk folder before asking for

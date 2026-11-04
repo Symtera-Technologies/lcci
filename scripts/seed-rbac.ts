@@ -1,16 +1,30 @@
 /**
  * Generate the RBAC seed migration from the TypeScript vocabulary.
  *
- *   npm run seed:rbac > migrations/0005_seed_rbac.sql
- *
  * Generated rather than hand-written because the permission codes are a closed
  * union in `src/server/permissions.ts` and the grants are rows in the database,
  * so the one thing that must not happen is the two disagreeing — a permission
  * that exists in TypeScript and not in `permissions` makes every check against
  * it fail silently, which is a role that quietly cannot do its job.
  *
- * `tests/rbac-seed.test.ts` asserts the committed file still matches, so
- * changing a role's grants without regenerating fails the suite.
+ * ## Do not run this over 0005
+ *
+ * It produced `migrations/0005_seed_rbac.sql`, which has since been applied.
+ * An applied migration is immutable: the runner compares a checksum and
+ * refuses a file that has changed, which is the only thing standing between a
+ * rewritten migration and a database nobody can describe. Redirecting this
+ * output over 0005 breaks every environment that has already run it, starting
+ * with the one you cannot see.
+ *
+ * **A permission added after 0005 goes in a new migration** — three
+ * idempotent lines, as `0045_enquiry_permission.sql` does. This script stays
+ * for bootstrapping a fresh vocabulary and for reading what the defaults are;
+ * if you want its output, send it somewhere that is not an applied migration.
+ *
+ * `tests/rbac-seed.test.ts` holds the invariant that actually matters, and it
+ * reads every migration rather than this file's output: the database the
+ * sequence produces must carry exactly the TypeScript vocabulary, with each
+ * code's label and domain. Adding a permission and no migration fails there.
  */
 
 import { PERMISSIONS, PERMISSION_CODES, ROLE_SEED, ROLE_CODES } from "../src/server/permissions";

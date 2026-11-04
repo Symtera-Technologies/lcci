@@ -7,6 +7,7 @@ import { sweep } from "@/server/rate-limit";
 import { verifyAuditChain } from "@/server/audit";
 import { systemActor } from "@/server/actor";
 import { recomputeFlaggedClocks } from "@/membership/calendar";
+import { MEMBERSHIP_PORTAL_ENABLED } from "@/membership/portal";
 import { revalidatePath } from "next/cache";
 import { jobSchedule, type JobName, type JobSchedule } from "@/server/jobs/schedule";
 
@@ -239,6 +240,24 @@ export const JOB_HANDLERS = {
    * restates a date the calendar already determined.
    */
   "sla-recompute": async (ctx) => {
+    // Nothing to recompute while the membership portal is off: no application
+    // can reach this site, so the clocks this job adjusts do not exist. Kept
+    // scheduled rather than unregistered, because `JobName` is derived from
+    // `JOB_SCHEDULE` and the two are bound by `satisfies` — removing one half
+    // is a type error, and removing both would mean rebuilding the entry to
+    // turn the portal back on. See src/membership/portal.ts.
+    if (!MEMBERSHIP_PORTAL_ENABLED) {
+      // Annotated, not inferred: without it TypeScript unions this literal
+      // with the one below and gives each an optional `undefined` sibling
+      // property, which `JobResult["detail"]` does not allow.
+      const skipped: JobResult = {
+        processed: 0,
+        more: false,
+        detail: { skipped: "membership portal disabled" },
+      };
+      return skipped;
+    }
+
     const result = await recomputeFlaggedClocks(systemActor(ctx.runId), 50);
     return {
       processed: result.examined,

@@ -53,7 +53,7 @@ export async function NewsAndEvents() {
 
                   <h3 className="mt-2.5 font-display text-xl font-semibold leading-snug">
                     <Link
-                      href={`/news/${item.slug}`}
+                      href={`/news/press-releases/${item.slug}`}
                       className="text-ink-950 decoration-brand-400 decoration-2 underline-offset-4 hover:underline"
                     >
                       {item.titleEn}

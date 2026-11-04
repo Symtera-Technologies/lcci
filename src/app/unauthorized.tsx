@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LEGACY_PORTAL } from "@/membership/portal";
 
 /**
  * 401, for a request with no usable session.
@@ -27,12 +28,14 @@ export default function Unauthorized() {
         >
           Staff sign-in
         </Link>
-        <Link
-          href="/membership/sign-in"
+        {/* The Chamber's portal, not this site — members have no account
+            here. See src/membership/portal.ts. */}
+        <a
+          href={LEGACY_PORTAL.signIn}
           className="font-medium text-brand-700 underline decoration-brand-700/40 underline-offset-4 hover:decoration-brand-700"
         >
           Member sign-in
-        </Link>
+        </a>
       </p>
     </main>
   );

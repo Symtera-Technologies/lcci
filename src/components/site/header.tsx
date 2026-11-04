@@ -7,6 +7,8 @@ import { ChevronDown, Menu, Phone, Search, User, X } from "lucide-react";
 import { Logo } from "./logo";
 import { PRIMARY_NAV, type NavSection } from "./nav-data";
 import { ButtonLink } from "@/components/ui/button";
+import { CHAMBER } from "@/content/chamber";
+import { LEGACY_PORTAL } from "@/membership/portal";
 import { cn } from "@/lib/cn";
 
 export function Header() {
@@ -26,11 +28,11 @@ export function Header() {
       <div className="hidden bg-ink-950 text-ink-100 lg:block">
         <div className="container-page flex h-10 items-center justify-between text-[0.8125rem]">
           <a
-            href="tel:+92111222499"
+            href={CHAMBER.telephone.href}
             className="inline-flex items-center gap-2 text-ink-200 transition-colors hover:text-white"
           >
             <Phone className="h-3.5 w-3.5" aria-hidden />
-            <span>111-222-499</span>
+            <span>{CHAMBER.telephone.display}</span>
           </a>
 
           <nav aria-label="Utility" className="flex items-center gap-6">
@@ -44,13 +46,14 @@ export function Header() {
               Media
             </Link>
             <span className="h-4 w-px bg-white/15" aria-hidden />
-            <Link
-              href="/portal"
+            {/* The Chamber's portal, not this site. See membership/portal.ts. */}
+            <a
+              href={LEGACY_PORTAL.signIn}
               className="inline-flex items-center gap-1.5 transition-colors hover:text-brand-300"
             >
               <User className="h-3.5 w-3.5" aria-hidden />
               Member login
-            </Link>
+            </a>
             <Link
               href="/ur"
               lang="ur"
@@ -84,7 +87,14 @@ export function Header() {
             <Search className="h-[1.125rem] w-[1.125rem]" aria-hidden />
           </Link>
 
-          <ButtonLink href="/membership/apply" size="sm" className="hidden sm:inline-flex">
+          {/* Both "Join" and "Member login" leave for the Chamber's portal:
+              this site runs no membership account of its own. See
+              src/membership/portal.ts for how to bring it back. */}
+          <ButtonLink
+            href={LEGACY_PORTAL.register}
+            size="sm"
+            className="hidden sm:inline-flex"
+          >
             Join LCCI
           </ButtonLink>
 
@@ -255,11 +265,11 @@ function MobileNav({ onClose }: { onClose: () => void }) {
         </nav>
 
         <div className="shrink-0 space-y-2 border-t border-stone-200 p-5">
-          <ButtonLink href="/membership/apply" className="w-full" onClick={onClose}>
+          <ButtonLink href={LEGACY_PORTAL.register} className="w-full" onClick={onClose}>
             Join LCCI
           </ButtonLink>
           <ButtonLink
-            href="/portal"
+            href={LEGACY_PORTAL.signIn}
             variant="ghost"
             className="w-full"
             onClick={onClose}

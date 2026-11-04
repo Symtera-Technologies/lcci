@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start -p 9000",
     "lint": "eslint",
+    "preview": "tsx --tsconfig tsconfig.scripts.json scripts/preview-page.tsx",
     "test": "vitest run",
     "test:watch": "vitest",
     "migrate": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/migrate.ts",
@@ -29,7 +30,8 @@
     "db:check": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local --tsconfig tsconfig.scripts.json scripts/db-check.ts",
     "db:check:remote": "tsx --env-file=.env.production.local --tsconfig tsconfig.scripts.json scripts/db-check.ts",
     "migrate:remote": "tsx --env-file=.env.production.local --tsconfig tsconfig.scripts.json scripts/migrate.ts",
-    "migrate:status:remote": "tsx --env-file=.env.production.local --tsconfig tsconfig.scripts.json scripts/migrate.ts --status"
+    "migrate:status:remote": "tsx --env-file=.env.production.local --tsconfig tsconfig.scripts.json scripts/migrate.ts --status",
+    "verify:migration": "tsx --tsconfig tsconfig.scripts.json scripts/verify-migrated-text.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",

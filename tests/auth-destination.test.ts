@@ -68,4 +68,16 @@ describe("safeDestination", () => {
       DEFAULT_DESTINATION,
     );
   });
+
+  /**
+   * The registration page ends by redirecting here, exactly as sign-in does,
+   * so naming it as a destination means confirming a code and landing on a
+   * form that asks you to open an account. Both doors, both excluded.
+   */
+  it("refuses to loop back to the registration page", () => {
+    expect(safeDestination("/membership/register")).toBe(DEFAULT_DESTINATION);
+    expect(safeDestination("/membership/register?next=/membership/apply")).toBe(
+      DEFAULT_DESTINATION,
+    );
+  });
 });

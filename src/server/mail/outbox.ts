@@ -243,6 +243,9 @@ async function deliver(
   payload: unknown,
   to: string,
 ): Promise<void> {
+  // `rendered` carries subject, text, and — for the contact enquiry alone —
+  // html and replyTo. Spread rather than named, so a template that starts
+  // setting one of them does not also need an edit here.
   const { stream, ...rendered } = renderTemplate(template, payload);
 
   await getMailer().send({ to, stream, ...rendered });

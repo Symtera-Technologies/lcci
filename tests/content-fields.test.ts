@@ -99,36 +99,68 @@ function parseTables(sql: string): Map<string, Column[]> {
 const TABLES = parseTables(readMigration("0016_content.sql"));
 
 /**
- * Migration 0018's `ALTER TABLE`s, folded in.
+ * Later migrations that create a content table of their own, folded in.
+ *
+ * A new content type arrives as its own numbered file rather than as an edit
+ * to 0016, which is already applied everywhere and checksummed. So the list
+ * grows, and the cost of forgetting to add a file here is loud: every test
+ * below for that type throws on a table it cannot find.
+ */
+for (const file of [
+  "0022_content_hero.sql",
+  "0024_content_page.sql",
+  "0038_content_portrait.sql",
+]) {
+  for (const [table, columns] of parseTables(readMigration(file))) {
+    TABLES.set(table, columns);
+  }
+}
+
+/**
+ * Columns added to an existing content table by a later `ALTER TABLE`.
  *
  * Only the added columns are read, not re-parsed from scratch: the point is
  * that a later migration's columns are visible here too, so a third body
  * column added in 0019 and left out of the specs still fails this file.
+ *
+ * The width is captured as well as the type, because a `VARCHAR` added this
+ * way is exactly as easy to give the wrong editor limit as one declared in a
+ * `CREATE TABLE`, and a width of `null` would quietly skip the check that
+ * catches it.
  */
-for (const statement of readMigration("0018_content_body.sql").split(";")) {
-  const alter = /ALTER TABLE (\w+)([\s\S]*)/.exec(
-    statement.replace(/^\s*--.*$/gm, "").trim(),
-  );
-  if (!alter) continue;
+for (const file of ["0018_content_body.sql", "0039_page_meta.sql"]) {
+  for (const statement of readMigration(file).split(";")) {
+    const alter = /ALTER TABLE (\w+)([\s\S]*)/.exec(
+      statement.replace(/^\s*--.*$/gm, "").trim(),
+    );
+    if (!alter) continue;
 
-  const columns = TABLES.get(alter[1]);
-  if (!columns) continue;
+    const columns = TABLES.get(alter[1]);
+    if (!columns) continue;
 
-  for (const add of alter[2].matchAll(/ADD COLUMN (\w+)\s+([A-Z]+(?:\(\d+\))?)\s+(NOT NULL|NULL)/g)) {
-    columns.push({
-      name: add[1],
-      type: `${add[2]} ${add[3]}`,
-      notNull: add[3] === "NOT NULL",
-      hasDefault: false,
-      width: null,
-      enumValues: null,
-    });
+    for (const add of alter[2].matchAll(
+      /ADD COLUMN (\w+)\s+([A-Z]+(?:\((\d+)\))?)\s+(NOT NULL|NULL)/g,
+    )) {
+      columns.push({
+        name: add[1],
+        type: `${add[2]} ${add[4]}`,
+        notNull: add[4] === "NOT NULL",
+        hasDefault: false,
+        width: add[3] ? Number(add[3]) : null,
+        enumValues: null,
+      });
+    }
   }
 }
 
 function columnsOf(table: string): Column[] {
   const columns = TABLES.get(table);
-  if (!columns) throw new Error(`migration 0016 declares no table ${table}`);
+  if (!columns) {
+    throw new Error(
+      `no migration read by this file declares a table ${table}. ` +
+        "A new content type needs its migration added to the list above.",
+    );
+  }
   return columns;
 }
 
@@ -143,7 +175,7 @@ describe("the migrations parsed", () => {
     // A parser that silently matched nothing would make every test below pass
     // for the wrong reason, which is the standard failure of a test that reads
     // its expectations from a file.
-    expect(TABLES.size).toBe(18);
+    expect(TABLES.size).toBe(21);
     expect(columnByName("content_items", "title_en")).toMatchObject({
       notNull: true,
       width: 300,
@@ -293,6 +325,10 @@ describe("the parent fields", () => {
       "notice",
       "partner",
       "policy_position",
+      // Not because a public read orders portraits by it — the roster's
+      // order is its own migrated prose — but because the office-bearers
+      // band on /about/leadership does, and that band is a public read.
+      "portrait",
       "service_tile",
       "testimonial",
     ]);

@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { SESSION_COOKIE } from "@/server/auth/session";
 import { authenticatedCsp, cspHeaderName, CSP_REPORT_DIRECTIVE } from "@/server/csp";
 import { routePolicy } from "@/server/auth/policy";
+import { disabledRouteTarget } from "@/membership/portal";
 
 /**
  * Proxy — a pre-filter, not a security boundary.
@@ -69,6 +70,26 @@ export function proxy(request: NextRequest): NextResponse {
   // against relying on shared modules and globals — a proxy may be deployed
   // separately from the render path.
   const requestId = newRequestId();
+
+  // The membership portal is switched off — joining, signing in, fees and
+  // renewal all live on membership.lcci.org.pk. See `membership/portal.ts`.
+  //
+  // Handled here rather than in each page, because the proxy runs before the
+  // render and so catches the nested routes (`/membership/apply/submitted`,
+  // every `/admin/applications/[id]/...`) without a redirect pasted into nine
+  // files, each of which would be a place to forget one.
+  //
+  // **307, never 308.** `NextResponse.redirect` defaults to 307 Temporary,
+  // which is what we want: a 308 is cached by the browser indefinitely, so
+  // every member who visited once while the portal was off would keep being
+  // thrown out to the old site after it came back, and there is no way to
+  // reach into their cache and undo it.
+  const offsite = disabledRouteTarget(pathname);
+  if (offsite) {
+    const away = NextResponse.redirect(new URL(offsite, request.url));
+    away.headers.set("x-request-id", requestId);
+    return away;
+  }
 
   const headers = new Headers(request.headers);
   headers.set("x-request-id", requestId);

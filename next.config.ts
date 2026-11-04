@@ -52,11 +52,39 @@ const nextConfig: NextConfig = {
     },
   },
 
+  /**
+   * No runtime image optimisation. `next/image` emits a plain `<img>`.
+   *
+   * Three reasons, and any one of them is enough.
+   *
+   * **It cannot work here.** The optimiser needs `sharp` at runtime and `sharp`
+   * is deliberately not a dependency, so on the server every
+   * `/_next/image?url=…` request fails — which is how this was found: the
+   * header logo, a 27 KB PNG, 500ing in production while rendering perfectly
+   * in `next dev`, where Next falls back to its own WASM decoder.
+   *
+   * **It must not work here.** `sharp` decodes to raw RGBA before it resizes,
+   * so one 300 dpi A4 scan is ~215 MB in the decoder. On a shared cPanel plan
+   * that is the Passenger worker killed, and the failure is site-wide and
+   * reachable from a public form. `docs/DEPLOYMENT.md` and the project plan
+   * both rule out runtime `sharp` for this reason.
+   *
+   * **There is nothing to optimise.** Every raster asset is already sized for
+   * the layout that uses it: 703 KB across 13 files, the largest a 87 KB
+   * photograph. An optimiser would be spending memory to save bytes that are
+   * not there.
+   *
+   * `formats`, `deviceSizes` and `imageSizes` were set here before and are all
+   * optimiser-only, so they are gone rather than left to imply that resizing
+   * happens. Turning the optimiser back on means adding `sharp`, re-reading
+   * the memory argument above, and pre-sizing anything large that has been
+   * added to `public/` since.
+   *
+   * This is separate from the applicant documents, which are never served
+   * through `next/image` at all — see the Documents section of the plan.
+   */
   images: {
-    formats: ["image/avif", "image/webp"],
-    // Shared cPanel has a tight memory ceiling; keep the generated set small.
-    deviceSizes: [360, 640, 828, 1080, 1440, 1920],
-    imageSizes: [96, 160, 256, 384],
+    unoptimized: true,
   },
 
   poweredByHeader: false,

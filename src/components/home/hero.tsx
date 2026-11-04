@@ -1,6 +1,8 @@
 import Image from "next/image";
 import { ArrowRight } from "lucide-react";
 import { ButtonLink } from "@/components/ui/button";
+import { LEGACY_PORTAL } from "@/membership/portal";
+import { ArchPattern } from "@/components/site/arch-pattern";
 
 /**
  * One message, two calls to action — spec §4.3 — beside a collage of the
@@ -68,7 +70,9 @@ export function Hero() {
             </p>
 
             <div className="mt-9 flex flex-wrap items-center gap-3">
-              <ButtonLink href="/membership/apply" size="lg">
+              {/* Off to the Chamber's portal; this site runs no membership
+                  account of its own. See src/membership/portal.ts. */}
+              <ButtonLink href={LEGACY_PORTAL.register} size="lg">
                 Join LCCI
                 <ArrowRight className="h-4 w-4" aria-hidden />
               </ButtonLink>
@@ -80,7 +84,7 @@ export function Hero() {
             <p className="mt-6 text-sm text-ink-400">
               Already a member?{" "}
               <a
-                href="/portal"
+                href={LEGACY_PORTAL.signIn}
                 className="font-medium text-ink-200 underline underline-offset-4 hover:text-white"
               >
                 Sign in to renew or track a request
@@ -171,39 +175,3 @@ function Frame({
   );
 }
 
-/** Repeating pointed-arch colonnade, echoing Lahore's own architecture. */
-function ArchPattern() {
-  return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-      <svg
-        className="absolute -start-24 top-0 h-full w-[40rem] opacity-[0.12]"
-        viewBox="0 0 560 420"
-        fill="none"
-        preserveAspectRatio="xMidYMid slice"
-      >
-        <defs>
-          <linearGradient id="archFade" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#2cbd7d" stopOpacity="0.9" />
-            <stop offset="100%" stopColor="#2cbd7d" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {[0, 1, 2, 3].map((i) => (
-          <g key={i} transform={`translate(${i * 140} 0)`}>
-            <path
-              d="M20 420V150C20 95 55 55 90 55C125 55 160 95 160 150V420"
-              stroke="url(#archFade)"
-              strokeWidth="2"
-            />
-            <path
-              d="M55 420V190C55 160 70 140 90 140C110 140 125 160 125 190V420"
-              stroke="url(#archFade)"
-              strokeWidth="1.25"
-            />
-          </g>
-        ))}
-      </svg>
-
-      <div className="absolute -start-32 -top-32 h-[32rem] w-[32rem] rounded-full bg-brand-500/12 blur-3xl" />
-    </div>
-  );
-}

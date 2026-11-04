@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ArrowRight } from "lucide-react";
+import { LEGACY_PORTAL } from "@/membership/portal";
 import { Header } from "@/components/site/header";
 import { Footer } from "@/components/site/footer";
 import { NoticeStrip } from "@/components/home/notice-strip";
@@ -77,7 +78,8 @@ function JoinBand() {
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-3">
-          <ButtonLink href="/membership/apply" size="lg" variant="secondary">
+          {/* The Chamber's portal; this site runs no application of its own. */}
+          <ButtonLink href={LEGACY_PORTAL.register} size="lg" variant="secondary">
             Apply online
             <ArrowRight className="h-4 w-4" aria-hidden />
           </ButtonLink>

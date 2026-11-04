@@ -1,13 +1,9 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { Mail, MapPin, Phone, Printer } from "lucide-react";
+import { CHAMBER, addressLines } from "@/content/chamber";
 import { Logo } from "./logo";
-import {
-  DEPARTMENTS,
-  FOOTER_LEGAL,
-  FOOTER_TASKS,
-  PRIMARY_NAV,
-  SOCIAL,
-} from "./nav-data";
+import { FOOTER_LEGAL, FOOTER_TASKS, PRIMARY_NAV, SOCIAL } from "./nav-data";
 
 export function Footer() {
   return (
@@ -22,36 +18,41 @@ export function Footer() {
               <p className="flex gap-3">
                 <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-400" aria-hidden />
                 <span>
-                  Lahore Chamber of Commerce &amp; Industry
-                  <br />
-                  11 Shahrah-e-Aiwan-e-Tijarat
-                  <br />
-                  Lahore 54000, Punjab, Pakistan
+                  {addressLines().map((line, i) => (
+                    <Fragment key={line}>
+                      {i > 0 ? <br /> : null}
+                      {line}
+                    </Fragment>
+                  ))}
                 </span>
               </p>
               <p className="flex gap-3">
                 <Phone className="h-4 w-4 shrink-0 text-brand-400" aria-hidden />
-                <a href="tel:+92111222499" className="hover:text-white">
-                  111-222-499
+                <a href={CHAMBER.telephone.href} className="hover:text-white">
+                  {CHAMBER.telephone.display}
                 </a>
               </p>
               <p className="flex gap-3">
                 <Printer className="h-4 w-4 shrink-0 text-brand-400" aria-hidden />
-                <span>+92 42 3636 8854</span>
+                <span>{CHAMBER.fax}</span>
               </p>
             </address>
 
+            {/* The chamber's own published addresses, which are its office
+                bearers' — not departmental inboxes. Four plausible
+                departmental addresses stood here until they were checked
+                against lcci.com.pk, where none of them appears. */}
             <h3 className="mt-8 text-xs font-semibold uppercase tracking-[0.14em] text-ink-400">
-              Departments
+              Write to the chamber
             </h3>
             <ul className="mt-3 space-y-2 text-sm">
-              {DEPARTMENTS.map((d) => (
-                <li key={d.email} className="flex gap-3">
+              {CHAMBER.officeContacts.map((contact) => (
+                <li key={contact.email} className="flex gap-3">
                   <Mail className="mt-0.5 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
                   <span>
-                    <span className="text-ink-400">{d.name}: </span>
-                    <a href={`mailto:${d.email}`} className="hover:text-white">
-                      {d.email}
+                    <span className="text-ink-400">{contact.role}: </span>
+                    <a href={`mailto:${contact.email}`} className="hover:text-white">
+                      {contact.email}
                     </a>
                   </span>
                 </li>
@@ -116,8 +117,8 @@ export function Footer() {
 
         <div className="mt-14 flex flex-col gap-4 border-t border-white/10 pt-6 text-sm sm:flex-row sm:items-center sm:justify-between">
           <p className="text-ink-400">
-            © {new Date().getFullYear()} Lahore Chamber of Commerce &amp; Industry.
-            Established 1923.
+            © {new Date().getFullYear()} {CHAMBER.name}. Established{" "}
+            {CHAMBER.foundedYear}.
           </p>
           <nav aria-label="Legal" className="flex flex-wrap items-center gap-x-6 gap-y-2">
             {FOOTER_LEGAL.map((l) => (

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, LogIn } from "lucide-react";
 import { ButtonLink } from "@/components/ui/button";
+import { LEGACY_PORTAL } from "@/membership/portal";
 
 /**
  * The last thing a visitor sees before the footer.
@@ -53,7 +54,10 @@ export function ClosingBand() {
             </p>
 
             <div className="mt-9 flex flex-wrap items-center gap-3">
-              <ButtonLink href="/membership/apply" variant="primary" size="lg">
+              {/* The Chamber's own portal. This site is content only: it runs
+                  no registration, no fee and no renewal of its own. See
+                  src/membership/portal.ts. */}
+              <ButtonLink href={LEGACY_PORTAL.register} variant="primary" size="lg">
                 Join LCCI
                 <ArrowRight className="h-4 w-4" aria-hidden />
               </ButtonLink>
@@ -61,7 +65,7 @@ export function ClosingBand() {
                   against ink-950 at 25% white it lands at 2.2:1, under the 3:1
                   that 1.4.11 asks of a control's boundary. 40% clears it. */}
               <ButtonLink
-                href="/portal"
+                href={LEGACY_PORTAL.signIn}
                 variant="onDark"
                 size="lg"
                 className="ring-white/40"

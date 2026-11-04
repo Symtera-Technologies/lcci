@@ -177,7 +177,7 @@ function PressItem({ item, lede }: { item: PressRelease; lede: boolean }) {
           )}
         >
           <Link
-            href={`/news/${item.slug}`}
+            href={`/news/press-releases/${item.slug}`}
             className="text-ink-950 decoration-brand-500 decoration-2 underline-offset-4 hover:underline"
           >
             {item.titleEn}

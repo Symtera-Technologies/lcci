@@ -38,6 +38,30 @@ async function main(): Promise<number> {
           "means the file and the database disagree; a missing file means a " +
           "migration was applied from a different checkout.",
       );
+
+      // Which side changed is the whole question, and the message above does
+      // not answer it. Printing both checksums does: hash the file against the
+      // copy in version control and whichever one it matches is the side that
+      // is intact. Line endings are normalised before hashing, so a checkout
+      // with CRLF is not the explanation.
+      for (const s of broken) {
+        if (!s.checksums) continue;
+        console.error(`\n${s.version}_${s.name}.sql`);
+        console.error(`  recorded in the database  ${s.checksums.recorded}`);
+        console.error(`  this file on disk         ${s.checksums.file}`);
+        console.error(
+          `  sha256sum migrations/${s.version}_${s.name}.sql`,
+        );
+        console.error(
+          "  If it matches the repository, the ledger was written from a " +
+            "different copy of this file.",
+        );
+        console.error(
+          "  If it does not, this file is the damaged one — restore it from " +
+            "the repository and re-run.",
+        );
+      }
+
       return 1;
     }
     return 0;

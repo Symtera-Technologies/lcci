@@ -81,8 +81,14 @@ const TIMING_FLOOR_MS = 900;
  * `identifier_hash` must all agree: `Owais@Example.com` and
  * `owais@example.com` are one account, and if they hash differently then three
  * requests become six and the rate limit has been halved by capitalisation.
+ *
+ * Exported for `registration.ts`, and that export is load-bearing rather than
+ * a convenience. Registration consumes the *same* `otpRequestIdentifier`
+ * bucket as sign-in, so if the two normalised differently an attacker would
+ * get three codes an hour from each endpoint instead of three in total — the
+ * published limit would be false by a factor of two. One function, one key.
  */
-function normaliseIdentifier(raw: string): string {
+export function normaliseIdentifier(raw: string): string {
   return raw.trim().toLowerCase().replace(/\s+/g, "");
 }
 
@@ -90,7 +96,7 @@ function looksLikeEmail(identifier: string): boolean {
   return identifier.includes("@");
 }
 
-interface SignInUser {
+export interface SignInUser {
   readonly id: number;
   readonly email: string;
   readonly userType: UserType;
@@ -138,7 +144,9 @@ async function resolveIdentifier(identifier: string): Promise<SignInUser | null>
  * context. Attributing a failed sign-in to the account whose address was typed
  * would put "this user did X" in the log for something a stranger did.
  */
-function anonymousActor(
+// Shared with `registration.ts`, which writes its events from the same
+// before-anyone-is-authenticated position.
+export function anonymousActor(
   requestId: string,
   ip: string | null,
   userAgent: string | null,
@@ -158,7 +166,12 @@ function anonymousActor(
   };
 }
 
-async function floorDelay(startedAt: number): Promise<void> {
+/**
+ * Hold a response to the floor. Exported so registration shares the same one:
+ * two endpoints that both answer "if that address is registered…" must take
+ * the same time to say it, or the faster one is the oracle.
+ */
+export async function floorDelay(startedAt: number): Promise<void> {
   const remaining = TIMING_FLOOR_MS - (Date.now() - startedAt);
   if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
 }
@@ -199,7 +212,7 @@ export interface IssueResult {
 }
 
 /** See `IssueResult.devCode`. Both conditions, never one. */
-function mayEchoCode(): boolean {
+export function mayEchoCode(): boolean {
   return !env.isProduction && getMailer().name === "console";
 }
 

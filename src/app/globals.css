@@ -336,6 +336,66 @@
   @media (width >= 80rem) { padding-inline: 2.5rem; }
 }
 
+/**
+ * Ordinals on a numbered card grid, drawn by CSS and not written into the HTML.
+ *
+ * **This is a correctness constraint, not a styling preference.**
+ * `scripts/verify-migrated-text.ts` asserts that every run of six consecutive
+ * words from a legacy page appears in the built HTML of the route it was
+ * mapped to. The runs span paragraph boundaries, so a literal `01.` in the
+ * markup between two mission statements breaks the run that crosses it, and
+ * the page reports migrated text as lost. A counter's `content` is generated,
+ * never in the document, so the word sequence is untouched.
+ *
+ * It is also the right markup on its own terms: the number is the list's
+ * ordinal, which is what `<ol>` already means, so putting it in a `<span>`
+ * would be stating twice what the element says once. A screen reader announces
+ * list position from the `<ol>` and reads nothing extra.
+ *
+ * `decimal-leading-zero` so a five-item list reads 01–05 rather than 1–5 and
+ * the numerals share a width.
+ */
+@utility step-list {
+  counter-reset: lcci-step;
+}
+
+@utility step-ordinal {
+  counter-increment: lcci-step;
+
+  &::before {
+    content: counter(lcci-step, decimal-leading-zero);
+    position: absolute;
+    inset-block-start: 1.125rem;
+    inset-inline-start: 1.5rem;
+    font-family: var(--font-display);
+    font-size: 1.25rem;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--color-brand-500);
+  }
+}
+
+/**
+ * The initial standing in for a portrait nobody has a photograph of.
+ *
+ * Drawn from `data-initial` by CSS, for exactly the reason the ordinal above
+ * is drawn by a counter: a letter written into the markup is a *word* as far
+ * as `scripts/verify-migrated-text.ts` is concerned, and on
+ * `/about/past-leadership` it would sit between the last word of one person's
+ * entry and the first word of the next, breaking every run of six words that
+ * spans them. An attribute lives inside the tag, which that check strips.
+ *
+ * `attr()` in `content` is the one form of `attr()` with universal support.
+ * If the stylesheet does not load, no letter appears — which is correct for
+ * something purely decorative, and better than a stray capital in the text.
+ */
+@utility portrait-initial {
+  &::before {
+    content: attr(data-initial);
+  }
+}
+
 /* ==========================================================================
    Variant 2 utilities
    ========================================================================== */
@@ -495,5 +555,119 @@
 
   & :last-child {
     margin-bottom: 0;
+  }
+}
+
+/**
+ * The public article body.
+ *
+ * Composes `prose-editor` rather than restating it. That matters beyond
+ * tidiness: the editor's surface is a promise about what the page will look
+ * like, and two independent copies of these rules would drift until an editor
+ * styling a heading in one box got a different heading on the page. So the
+ * shared structure lives in `prose-editor` and this adds only what a
+ * full-width page wants that a 48-line editing box does not — a reading
+ * measure, larger copy, and headings that can afford more air.
+ *
+ * `max-width` is on the utility, not on a wrapper, so no caller can forget it.
+ * 68 characters is the measure; a body running the full width of
+ * `container-page` is 140 characters a line and genuinely hard to read.
+ */
+@utility prose-site {
+  @apply prose-editor;
+
+  max-width: 68ch;
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  color: var(--color-ink-800);
+
+  & h2 {
+    margin-top: 2em;
+    margin-bottom: 0.5em;
+    font-size: 1.5em;
+    letter-spacing: -0.011em;
+    color: var(--color-ink-950);
+  }
+
+  & h3 {
+    margin-top: 1.6em;
+    margin-bottom: 0.4em;
+    font-size: 1.2em;
+    color: var(--color-ink-950);
+  }
+
+  & h4 {
+    margin-top: 1.4em;
+    color: var(--color-ink-950);
+  }
+
+  & p,
+  & li {
+    margin-bottom: 1em;
+  }
+
+  & strong {
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+
+  /* The editor's link colour is brand-800 on white, which measures 5.9:1 and
+     carries into the page unchanged. The thicker underline is what makes a
+     link in a long paragraph findable without relying on the hue. */
+  & a {
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+    text-decoration-color: var(--color-brand-400);
+    transition: text-decoration-color 150ms ease;
+  }
+
+  & a:hover {
+    text-decoration-color: var(--color-brand-700);
+  }
+
+  /* A table that overflows the measure scrolls rather than widening the page.
+     Legacy content holds tariff tables that are genuinely wider than 68ch. */
+  & table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}
+
+/* A body set inside a card rather than as the page's own column.
+ *
+ * Declared after `prose-site` so that where both are applied this one wins —
+ * they have the same specificity, so the order in this file is the rule.
+ *
+ * It exists for the directory cards on the Resources pages, whose stored
+ * markup is one paragraph of `<br />`-broken address lines. At the page's own
+ * rhythm an address sets as four widely spaced lines that read as four
+ * separate thoughts; at this one it reads as an address.
+ *
+ * `strong` is the deliberate part. On `/resources/hospitals-lahore` every
+ * line of every entry is inside a `<strong>` — the name, the street, the fax
+ * number — so the page is four hundred words of bold text. Rendered at full
+ * weight inside a card that already names the organisation in its heading,
+ * the emphasis means nothing and costs legibility. Here it is a half step
+ * rather than a full one, which keeps a genuinely emphasised word visible on
+ * the entries that use `<strong>` the way it was meant. */
+@utility prose-tight {
+  max-width: none;
+  font-size: 0.875rem;
+  line-height: 1.6;
+
+  & p,
+  & li {
+    margin-bottom: 0.5em;
+  }
+
+  & p:last-child,
+  & li:last-child {
+    margin-bottom: 0;
+  }
+
+  & strong {
+    font-weight: 500;
+    color: var(--color-ink-800);
   }
 }

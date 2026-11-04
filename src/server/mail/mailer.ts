@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createTransport, type Transporter } from "nodemailer";
 import { log, logError } from "@/server/log";
 import { env } from "@/server/env";
 
@@ -138,6 +139,177 @@ class PostmarkMailer implements Mailer {
 }
 
 /* -------------------------------------------------------------------------- */
+/* SMTP transport                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * SMTP over nodemailer.
+ *
+ * The transport LCCI actually has today: a mailbox on their own mail server,
+ * with a host, a port and a password. It needs no account with a third party,
+ * no API token to procure, and no decision about which provider to sign up
+ * with — so it is what the contact form ships against, and the Postmark path
+ * above stays for the day sign-in codes and twenty thousand renewal notices
+ * make shared-IP reputation the binding problem.
+ *
+ * Everything in the module docstring about SMTP's costs is still true and is
+ * not restated as a warning here, with one exception worth keeping in view:
+ * **some shared cPanel plans block outbound connections to third-party SMTP
+ * ports**, so a configuration that works from a developer's laptop can fail on
+ * the host with a connection timeout and nothing else. If that happens, the
+ * answer is the host's own `localhost:25`, not a longer timeout.
+ *
+ * The transport is built once and reused. nodemailer opens a fresh connection
+ * per message unless pooling is on, which is deliberate: a pooled connection
+ * is a socket held open inside a Passenger worker that may be killed between
+ * requests, and the handshake it saves is worth less than not reasoning about
+ * that. `SMTP_POOL=1` turns pooling on for a host where the handshake proves
+ * expensive.
+ */
+class SmtpMailer implements Mailer {
+  readonly name = "smtp";
+
+  /** Built lazily so importing this module never opens a socket. */
+  private transport: Transporter | null = null;
+
+  constructor(
+    private readonly options: SmtpOptions,
+    private readonly fromAddress: string,
+  ) {}
+
+  private getTransport(): Transporter {
+    this.transport ??= createTransport(smtpTransportOptions(this.options));
+    return this.transport;
+  }
+
+  async send(message: OutboundMessage): Promise<SendResult> {
+    const info = await this.getTransport().sendMail({
+      from: this.fromAddress,
+      to: message.to,
+      subject: message.subject,
+      text: message.text,
+      ...(message.html ? { html: message.html } : {}),
+      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+
+      // The stream has no SMTP equivalent — it is a Postmark concept — so it
+      // travels as a header instead of being dropped. A mail server that
+      // filters or routes on it can; one that does not ignores it; and the
+      // received message still says which stream it belonged to, which is the
+      // first thing anyone debugging a delivery problem wants to know.
+      headers: { "X-LCCI-Stream": message.stream },
+    });
+
+    // nodemailer synthesises a Message-ID when the server does not return one,
+    // so this is populated either way and is what correlates a row in
+    // `email_outbox` with a line in the server's mail log.
+    return { providerId: info.messageId ?? null };
+  }
+}
+
+export interface SmtpOptions {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  rejectUnauthorized: boolean;
+  pool: boolean;
+}
+
+/**
+ * The nodemailer transport settings, as a pure function of the configuration.
+ *
+ * Extracted and exported so the decisions below can be asserted in a test. On
+ * a live connection they are invisible — a session that silently fell back to
+ * plaintext looks exactly like one that did not — and they are the settings
+ * that decide whether a sign-in code crosses the network readable.
+ */
+export function smtpTransportOptions(options: SmtpOptions) {
+  return {
+    host: options.host,
+    port: options.port,
+
+    // Implicit TLS on 465, STARTTLS everywhere else. `requireTLS` makes the
+    // upgrade mandatory rather than opportunistic: without it nodemailer will
+    // happily continue in the clear when the server omits STARTTLS from its
+    // greeting, which is precisely the downgrade an attacker on the path
+    // would arrange, and these messages carry sign-in codes.
+    secure: options.port === 465,
+    requireTLS: options.port !== 465,
+
+    ...(options.user
+      ? { auth: { user: options.user, pass: options.password } }
+      : {}),
+
+    tls: {
+      // Default true. cPanel mail servers frequently present a certificate
+      // for the server's own hostname rather than for `mail.lcci.com.pk`, and
+      // the temptation is to switch this off and move on — which silently
+      // accepts any certificate, so the session is encrypted against a
+      // passive observer and worthless against an active one. Left as an env
+      // flag so turning it off is a recorded decision, and so the fix of
+      // pointing SMTP_HOST at the name on the certificate stays the obvious
+      // first move.
+      rejectUnauthorized: options.rejectUnauthorized,
+    },
+
+    pool: options.pool,
+
+    // Three separate timeouts, because the three ways SMTP hangs are
+    // different: a host that never completes the TCP handshake, one that
+    // accepts the connection and never greets, and one that greets and then
+    // stops reading. Postmark's path gets the same ten seconds from a single
+    // AbortSignal; SMTP needs all three to be equivalent.
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
+  };
+}
+
+/**
+ * Read the SMTP settings, or report why they are unusable.
+ *
+ * Returns the problems rather than throwing, because `getMailer()` is called
+ * from the request path and a half-configured mail server must degrade to the
+ * console transport with a loud log line — not take down every page that
+ * happens to send something.
+ */
+function readSmtpOptions(): { options: SmtpOptions | null; problems: string[] } {
+  const host = process.env.SMTP_HOST?.trim();
+  if (!host) return { options: null, problems: [] };
+
+  const problems: string[] = [];
+
+  const port = Number.parseInt(process.env.SMTP_PORT?.trim() || "587", 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    problems.push("SMTP_PORT is not a port number.");
+  }
+
+  const user = process.env.SMTP_USER?.trim() ?? "";
+  const password = process.env.SMTP_PASSWORD ?? "";
+
+  // A username with no password is the shape a half-copied configuration
+  // takes, and it fails at the server with a 535 that reads like a wrong
+  // password rather than a missing one.
+  if (user && !password) {
+    problems.push("SMTP_USER is set but SMTP_PASSWORD is empty.");
+  }
+
+  if (problems.length > 0) return { options: null, problems };
+
+  return {
+    options: {
+      host,
+      port,
+      user,
+      password,
+      rejectUnauthorized: process.env.SMTP_TLS_REJECT_UNAUTHORIZED?.trim() !== "0",
+      pool: process.env.SMTP_POOL?.trim() === "1",
+    },
+    problems: [],
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Selection                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -146,16 +318,46 @@ let cached: Mailer | null = null;
 /**
  * The configured mailer.
  *
- * Falls back to the console transport rather than throwing when no provider is
- * set, so a development machine and an off-box build both work. In production
- * the absence is logged once, loudly, because silently not sending mail is the
- * failure that takes longest to notice: every flow appears to succeed.
+ * SMTP first when `SMTP_HOST` is set, because that is the transport the
+ * chamber has; Postmark when a token is present instead; the console when
+ * neither is, which is the normal state of a development machine.
+ *
+ * Falls back rather than throwing, so a development machine and an off-box
+ * build both work. In production the absence is logged once, loudly, because
+ * silently not sending mail is the failure that takes longest to notice:
+ * every flow appears to succeed.
  */
 export function getMailer(): Mailer {
   if (cached) return cached;
 
   const token = process.env.POSTMARK_TOKEN?.trim();
   const from = process.env.MAIL_FROM?.trim();
+
+  const smtp = readSmtpOptions();
+
+  if (smtp.problems.length > 0) {
+    logError(
+      "SMTP is configured but unusable; falling back",
+      new Error(smtp.problems.join(" ")),
+    );
+  }
+
+  // `MAIL_FROM` is required for every transport. SMTP servers will often
+  // accept a message with no From and rewrite it to the authenticated
+  // mailbox, which works until the day it does not and nobody can say what
+  // address members were seeing.
+  if (smtp.options && from) {
+    cached = new SmtpMailer(smtp.options, from);
+    log.info("mail transport selected", { template: "smtp", channel: "email" });
+    return cached;
+  }
+
+  if (smtp.options && !from) {
+    logError(
+      "SMTP_HOST is set but MAIL_FROM is not; no mail will be sent",
+      new Error("MAIL_FROM is required by every mail transport"),
+    );
+  }
 
   if (token && from) {
     cached = new PostmarkMailer(token, from, {

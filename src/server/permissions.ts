@@ -99,6 +99,22 @@ export const PERMISSIONS = {
     label: "Manage controlled form revisions",
   },
   "audit.read": { domain: "admin", label: "Read the audit log" },
+  /**
+   * Read what visitors sent through the website's contact form.
+   *
+   * Its own code rather than a content grant, because the two are different
+   * things: editing the chamber's pages and reading members of the public's
+   * correspondence have no reason to travel together, and a department editor
+   * brought in to fix the trade pages should not acquire an inbox.
+   *
+   * **Granted to no seeded role**, which is deliberate and not an omission.
+   * Which desk owns this inbox is LCCI's decision, nobody has made it, and a
+   * default of "the Information Department, probably" would be a guess that
+   * arrives as a fact — the kind that is never revisited because it already
+   * works. The super administrator holds it by virtue of holding everything,
+   * and assigning it is one grant in the staff panel rather than a deploy.
+   */
+  "enquiry.read": { domain: "admin", label: "Read website enquiries" },
   "conflict_waiver.grant": {
     domain: "admin",
     label: "Waive separation of duties on one application",

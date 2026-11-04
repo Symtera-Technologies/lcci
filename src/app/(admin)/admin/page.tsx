@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requireStaffPage } from "@/server/auth/dal";
 import { loadQueue, QUEUE_SCOPES, type QueueScope } from "@/membership/queue";
+import { LEGACY_PORTAL, MEMBERSHIP_PORTAL_ENABLED } from "@/membership/portal";
 
 export const metadata: Metadata = {
   title: "Backend",
@@ -22,9 +23,12 @@ export default async function AdminDashboard() {
   const actor = await requireStaffPage();
   const canReadApplications = actor.permissions.has("application.read");
 
-  const queue = canReadApplications
-    ? await loadQueue(actor, { scope: "open" })
-    : null;
+  // No query at all while the portal is off: nothing can reach these queues,
+  // so loading them is a round trip to the database to render four zeroes.
+  const queue =
+    MEMBERSHIP_PORTAL_ENABLED && canReadApplications
+      ? await loadQueue(actor, { scope: "open" })
+      : null;
 
   return (
     <main className="mx-auto w-full max-w-6xl px-6 py-10">
@@ -58,6 +62,23 @@ export default async function AdminDashboard() {
             ))}
           </dl>
         </section>
+      ) : !MEMBERSHIP_PORTAL_ENABLED ? (
+        /*
+          Said plainly, because the alternative is an officer wondering where
+          the queues went. This is not a fault and not a permission problem,
+          which is exactly what the message below it would wrongly imply.
+        */
+        <p className="mt-8 max-w-prose rounded-xl border border-stone-200 bg-white p-4 text-[0.9375rem] leading-relaxed text-ink-700">
+          Membership applications, fees and renewals are handled on the
+          Chamber&rsquo;s own portal at{" "}
+          <a
+            href={LEGACY_PORTAL.signIn}
+            className="font-medium text-brand-700 underline underline-offset-4"
+          >
+            membership.lcci.org.pk
+          </a>
+          , not here. This backend manages the website&rsquo;s content.
+        </p>
       ) : (
         <p className="mt-8 max-w-prose rounded-xl border border-stone-200 bg-white p-4 text-[0.9375rem] leading-relaxed text-ink-700">
           Your roles do not include access to membership applications. If that is

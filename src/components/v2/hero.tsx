@@ -2,6 +2,9 @@ import Image from "next/image";
 import { ArrowRight, ChevronDown, Landmark } from "lucide-react";
 import { ButtonLink } from "@/components/ui/button";
 import { TiltCard } from "@/components/v2/primitives";
+import { splitHeadline } from "@/content/headline";
+import { getHero } from "@/content/repository";
+import type { Hero, ImageRef } from "@/content/types";
 import { cn } from "@/lib/cn";
 
 /**
@@ -31,52 +34,59 @@ import { cn } from "@/lib/cn";
  * Renders entirely on the server. `TiltCard` is the only client code and it
  * no-ops without a fine pointer, so with JS disabled the composition is a set
  * of flat, correctly stacked frames rather than a hole.
+ *
+ * **Every string and all three photographs are editorial**, read from the
+ * `hero` content type by this component. What stays in this file is
+ * the composition: which plane each photograph occupies, the perspective
+ * length and shadow step that make the staging read as depth, and the
+ * `sizes` attributes those positions imply. Those are not editable on purpose
+ * — they are a fixed relationship between three frames, and "how many
+ * pictures" is a design decision rather than an editorial one.
  */
 
 /* -------------------------------------------------------------------------- */
-/* Content                                                                    */
+/* Staging                                                                    */
 /* -------------------------------------------------------------------------- */
 
-interface StagedPhoto {
-  src: string;
-  alt: string;
+/**
+ * How one plane is staged. Not editorial: see the note above.
+ *
+ * `sizes` is derived from the `lg:w-[…]` the plane is rendered at, so it has
+ * to live beside that class or the two drift and the browser downloads the
+ * wrong candidate.
+ */
+interface Plane {
   /** Lower value = stronger foreshortening, so the card reads nearer. */
   perspective: string;
   sizes: string;
 }
 
-/**
- * Alt text describes the event, never a participant. The identities in this
- * photography are unverified, and attaching the wrong name to a public figure
- * in a chamber photograph is a real-world harm, not a content nit — LCCI's
- * Information Department confirms names before any appear here.
- */
-const PHOTOS = {
+const PLANES = {
   lead: {
-    src: "/photos/hero-6.jpg",
-    alt: "Members and office-bearers of the Lahore Chamber gathered on the steps of the chamber building beneath its nameplate.",
     perspective: "900px",
     sizes: "(min-width: 1024px) 38vw, (min-width: 640px) 88vw, 92vw",
   },
   behind: {
-    src: "/photos/hero-1.jpg",
-    alt: "Chamber representatives in discussion with a senior government official at a formal meeting.",
     perspective: "1400px",
     sizes: "(min-width: 1024px) 16vw, (min-width: 640px) 43vw, 92vw",
   },
   front: {
-    src: "/photos/hero-2.jpg",
-    alt: "A chamber office-bearer shaking hands with a visiting government dignitary at an LCCI reception.",
     perspective: "640px",
     sizes: "(min-width: 1024px) 27vw, (min-width: 640px) 43vw, 92vw",
   },
-} satisfies Record<string, StagedPhoto>;
+} satisfies Record<string, Plane>;
 
 /* -------------------------------------------------------------------------- */
 /* Hero                                                                      */
 /* -------------------------------------------------------------------------- */
 
-export function HeroV2() {
+export async function HeroV2() {
+  // Read here rather than taken as a prop, because every other section in this
+  // directory reads its own content the same way. Plumbing one section's data
+  // through the page would make the hero the exception and give `page.tsx` a
+  // reason to change every time the hero does.
+  const hero = await getHero();
+
   return (
     <section
       className={cn(
@@ -92,13 +102,13 @@ export function HeroV2() {
       <div className="container-page relative flex flex-1 flex-col justify-center py-14 sm:py-16 lg:py-20">
         <div className="grid items-center gap-12 lg:grid-cols-12 lg:gap-14 xl:gap-16">
           <div className="lg:col-span-6 xl:col-span-5">
-            <Message />
+            <Message hero={hero} />
           </div>
 
           {/* Pushed a column right at xl so the composition has room to breathe
               without the headline measure growing past ~60 characters. */}
           <div className="lg:col-span-6 xl:col-span-6 xl:col-start-7">
-            <Composition />
+            <Composition hero={hero} />
           </div>
         </div>
       </div>
@@ -112,50 +122,69 @@ export function HeroV2() {
 /* Message                                                                    */
 /* -------------------------------------------------------------------------- */
 
-function Message() {
+function Message({ hero }: { hero: Hero }) {
+  // Split here rather than in the repository: which words are green is a
+  // presentation decision, and the stored row holds the headline and the
+  // phrase without an opinion about markup.
+  const headline = splitHeadline(hero.headlineEn, hero.headlineHighlightEn);
+
   return (
     <div>
       <p className="v2-glass inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-medium uppercase tracking-[0.14em] text-brand-300">
         <Landmark className="h-3.5 w-3.5" aria-hidden />
-        Serving Lahore&rsquo;s businesses since 1923
+        {hero.badgeEn}
       </p>
 
       {/* The one h1 on the page. Steps up to text-display-xl rather than
-          starting there: 60px over a 375px viewport breaks mid-word. */}
+          starting there: 60px over a 375px viewport breaks mid-word.
+
+          The three parts are rendered without any JSX whitespace between them,
+          because the spaces around the highlighted phrase belong to the stored
+          headline — adding `{" "}` here would double them for an editor who
+          typed them and invent them for one who did not. */}
       <h1 className="mt-6 font-display text-[2.125rem] font-semibold leading-[1.08] tracking-tight text-white sm:text-display-lg lg:text-display-xl">
-        The chamber that speaks for{" "}
-        <span className="text-brand-300">20,000 businesses</span> in Lahore.
+        {headline.before}
+        {headline.highlight ? (
+          <span className="text-brand-300">{headline.highlight}</span>
+        ) : null}
+        {headline.after}
       </h1>
 
       <p className="mt-6 max-w-xl text-lg leading-relaxed text-ink-200">
-        Join or renew online, get your certificates of origin and attestation
-        without a trip across the city, and put your case to government through
-        the chamber&rsquo;s committees.
+        {hero.subheadEn}
       </p>
 
       <div className="mt-9 flex flex-wrap items-center gap-3">
-        <ButtonLink href="/membership/apply" size="lg">
-          Join LCCI
+        <ButtonLink href={hero.primaryAction.href} size="lg">
+          {hero.primaryAction.labelEn}
           <ArrowRight className="h-4 w-4" aria-hidden />
         </ButtonLink>
-        <ButtonLink href="/services" size="lg" variant="onDark">
-          Smart Services
-        </ButtonLink>
+        {hero.secondaryAction ? (
+          <ButtonLink href={hero.secondaryAction.href} size="lg" variant="onDark">
+            {hero.secondaryAction.labelEn}
+          </ButtonLink>
+        ) : null}
       </div>
 
       {/* ink-200, not the ink-400 a "quiet" line invites. ink-400 measures
           5.1:1 on flat ink-950, but the stage is not flat ink-950 — the mesh
           lifts the local background, and 5.1:1 is not enough headroom to spend
-          on that. Quiet is carried by size here instead of by colour. */}
-      <p className="mt-7 text-sm text-ink-200">
-        Already a member?{" "}
-        <a
-          href="/portal"
-          className="font-medium text-white underline decoration-brand-400 decoration-2 underline-offset-4 transition-colors hover:decoration-brand-300"
-        >
-          Sign in to renew or track a request
-        </a>
-      </p>
+          on that. Quiet is carried by size here instead of by colour.
+
+          Both the prompt and the link are needed. A prompt with no link is a
+          question with no answer, and a bare link with no lead-in reads as a
+          third button competing with the two above it. */}
+      {hero.memberPromptEn && hero.memberAction ? (
+        <p className="mt-7 text-sm text-ink-200">
+          {hero.memberPromptEn}{" "}
+          <a
+            href={hero.memberAction.href}
+            className="font-medium text-white underline decoration-brand-400 decoration-2 underline-offset-4 transition-colors hover:decoration-brand-300"
+          >
+            {hero.memberAction.labelEn}
+          </a>
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -177,19 +206,20 @@ function Message() {
  * mistake rather than as perspective: shadow step, scale, and the perspective
  * length fed to each tilt surface.
  */
-function Composition() {
+function Composition({ hero }: { hero: Hero }) {
   return (
     <div className="relative grid gap-4 sm:grid-cols-2 sm:gap-5 lg:block lg:aspect-[1/0.86]">
       {/* Behind — smallest, faintest shadow, held back by scale. */}
       <TiltCard
         maxTilt={4}
         lift={3}
-        style={{ "--v2-perspective": PHOTOS.behind.perspective } as React.CSSProperties}
+        style={{ "--v2-perspective": PLANES.behind.perspective } as React.CSSProperties}
         className="z-10 lg:absolute lg:right-0 lg:top-[13%] lg:w-[34%] lg:scale-[0.96]"
       >
         <Frame
           className="aspect-[4/3] shadow-depth-1 ring-white/10"
-          photo={PHOTOS.behind}
+          image={hero.behindImage}
+          plane={PLANES.behind}
         />
       </TiltCard>
 
@@ -197,25 +227,33 @@ function Composition() {
       <TiltCard
         maxTilt={6}
         lift={6}
-        style={{ "--v2-perspective": PHOTOS.lead.perspective } as React.CSSProperties}
+        style={{ "--v2-perspective": PLANES.lead.perspective } as React.CSSProperties}
         className="order-first z-20 sm:col-span-2 lg:absolute lg:left-0 lg:top-0 lg:w-[82%]"
       >
         <Frame
           className="aspect-[16/10] shadow-depth-2 ring-white/15"
-          photo={PHOTOS.lead}
+          image={hero.leadImage}
+          plane={PLANES.lead}
           priority
         >
-          {/* Scrim first, chip second: v2-glass only resolves as frosted glass
+          {/* The scrim renders whether or not there is a caption: it is what
+              grades the photograph into the stage below it, and removing it
+              along with the caption would restage the composition every time
+              an editor cleared one field.
+
+              Scrim first, chip second: v2-glass only resolves as frosted glass
               over a dark saturated backdrop, and a photograph is neither. The
               scrim guarantees both the panel's look and the label's 4.5:1. */}
           <div
             aria-hidden
             className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-ink-950/90 via-ink-950/55 to-transparent"
           />
-          <figcaption className="v2-glass absolute bottom-3 start-3 inline-flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-medium uppercase tracking-[0.1em] text-white sm:bottom-4 sm:start-4">
-            <span className="h-1.5 w-1.5 rounded-full bg-brand-400" aria-hidden />
-            Annual General Meeting
-          </figcaption>
+          {hero.captionEn ? (
+            <figcaption className="v2-glass absolute bottom-3 start-3 inline-flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[0.6875rem] font-medium uppercase tracking-[0.1em] text-white sm:bottom-4 sm:start-4">
+              <span className="h-1.5 w-1.5 rounded-full bg-brand-400" aria-hidden />
+              {hero.captionEn}
+            </figcaption>
+          ) : null}
         </Frame>
       </TiltCard>
 
@@ -223,28 +261,33 @@ function Composition() {
       <TiltCard
         maxTilt={8}
         lift={9}
-        style={{ "--v2-perspective": PHOTOS.front.perspective } as React.CSSProperties}
+        style={{ "--v2-perspective": PLANES.front.perspective } as React.CSSProperties}
         className="z-30 lg:absolute lg:bottom-0 lg:right-[2%] lg:w-[58%]"
       >
         <Frame
           className="aspect-[3/2] shadow-depth-3 ring-white/20"
-          photo={PHOTOS.front}
+          image={hero.frontImage}
+          plane={PLANES.front}
         />
       </TiltCard>
 
       {/* Second glass chip, parked on the ink rather than on a photograph so
           it needs no scrim of its own. Hidden until there is empty stage to
           park it on. */}
-      <p className="v2-glass absolute bottom-[7%] left-0 hidden items-baseline gap-2 rounded-xl px-4 py-3 lg:inline-flex">
-        <span className="font-display text-2xl font-semibold leading-none text-brand-300">
-          103
-        </span>
-        <span className="text-[0.6875rem] font-medium uppercase leading-tight tracking-[0.12em] text-white">
-          years of
-          <br />
-          advocacy
-        </span>
-      </p>
+      {hero.statValueEn && hero.statLabelEn ? (
+        <p className="v2-glass absolute bottom-[7%] left-0 hidden items-baseline gap-2 rounded-xl px-4 py-3 lg:inline-flex">
+          <span className="font-display text-2xl font-semibold leading-none text-brand-300">
+            {hero.statValueEn}
+          </span>
+          {/* The hard-coded line break went with the hard-coded words. The
+              chip is narrow, so the label wraps on its own, and a break
+              positioned for "years of / advocacy" lands in the wrong place for
+              every other label an editor might type. */}
+          <span className="max-w-[7rem] text-[0.6875rem] font-medium uppercase leading-tight tracking-[0.12em] text-white">
+            {hero.statLabelEn}
+          </span>
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -256,12 +299,14 @@ function Composition() {
  * the client and not a stylistic choice.
  */
 function Frame({
-  photo,
+  image,
+  plane,
   className,
   priority,
   children,
 }: {
-  photo: StagedPhoto;
+  image: ImageRef;
+  plane: Plane;
   className?: string;
   priority?: boolean;
   children?: React.ReactNode;
@@ -273,12 +318,23 @@ function Frame({
         className,
       )}
     >
+      {/* `alt` comes from the media library, which is the only place it can be
+          right: the same photograph in the hero and in a press release has to
+          describe itself the same way, and a second copy of the description is
+          a second copy to get wrong. The CMS refuses to register an image
+          without alt text, so this is never empty.
+
+          The standing rule that alt text describes the event and never a
+          participant is therefore enforced where the text is written rather
+          than here. The identities in this photography are unverified, and
+          attaching the wrong name to a public figure in a chamber photograph
+          is a real-world harm rather than a content nit. */}
       <Image
-        src={photo.src}
-        alt={photo.alt}
+        src={image.src}
+        alt={image.altEn}
         fill
         priority={priority}
-        sizes={photo.sizes}
+        sizes={plane.sizes}
         className="object-cover"
       />
       {children}

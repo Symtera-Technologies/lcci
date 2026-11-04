@@ -1,0 +1,41 @@
+-- 0026 — point the homepage hero's "Join LCCI" button at the page that can
+-- actually take a new firm.
+--
+-- `0023_seed_hero.sql` seeded `primary_cta_href` as `/membership/apply`, which
+-- was the only answer available when it was written: the wizard was the
+-- application, and nothing in the system could create an account. It is now
+-- the wrong answer for the exact visitor the button is aimed at. The wizard is
+-- behind a session, so a firm that has never dealt with the Chamber follows
+-- the chamber's largest call to action and lands on a sign-in form asking for
+-- "the email address registered with the Chamber" — which, by definition, they
+-- do not have. `/membership/register` opens the account and redirects to the
+-- wizard, and answers a member who clicks it by mistake with a sign-in code
+-- rather than an error.
+--
+-- This is the same class of correction as the one 0023 made for
+-- `member_link_href`, which shipped pointing at `/portal`, a route this app
+-- does not serve.
+--
+-- **Why a migration and not an edit in the admin.** The hero is editable
+-- content, so an editor could fix this in thirty seconds — on one database.
+-- The seeded value is in every environment and in every database created from
+-- here on, so the fix belongs where the seed is. 0023 cannot be edited: the
+-- runner checksums applied migrations and a changed file reports
+-- `checksum-mismatch` rather than re-running.
+--
+-- **Narrow on purpose.** Only rows that still hold the seeded value move. A
+-- hero whose CTA an editor has already pointed somewhere else is a decision
+-- somebody made, and a seed correction that overwrites it would be a data loss
+-- dressed as a bug fix. Written as an UPDATE with that value in the WHERE
+-- clause rather than scoped to the `launch-hero` slug, because a chamber that
+-- has since published a second hero copied from the first has the same wrong
+-- link on it.
+--
+-- **After applying in production**, the public pages need revalidating before
+-- the new href is served — the `content-revalidate` job does this on its next
+-- tick, and a deploy does it anyway. Nothing breaks in the meantime: the old
+-- link still works, it just takes the visitor the long way round.
+
+UPDATE content_heroes
+   SET primary_cta_href = '/membership/register'
+ WHERE primary_cta_href = '/membership/apply';

@@ -49,6 +49,19 @@ An **empty** database does not fail the build. It produces a site with empty
 sections and no error, because the repository has no fixture fallback by
 design. `db:check` warns about that case too, and exits non-zero.
 
+**One exception, and it is the homepage.** The hero is a content type, and the
+homepage cannot render without a published one — `getHero()` throws rather
+than prerendering an empty stage above the fold. So the build’s database needs
+migration 0023 applied, or a hero published by hand, and the failure reads:
+
+```
+Error occurred prerendering page "/"
+Error: No homepage hero is published.
+```
+
+Which is a legible message, but it arrives during prerender rather than from
+the preflight, because only the database can answer it.
+
 ### Connecting on cPanel
 
 `ECONNREFUSED 127.0.0.1:3306` on this host almost always means one of two
@@ -140,6 +153,34 @@ That produces:
    not the other and the site serves canonical URLs for a different domain,
    which no test catches and no page looks wrong because of.
 
+   **Mail is not in that minimum, and the site will boot without it.** That is
+   deliberate — an unreachable mail server must not take the website down —
+   and it is also why it is the easiest thing on this page to forget. With no
+   transport configured, every flow that sends something succeeds and nothing
+   is delivered: contact enquiries vanish, and sign-in codes never arrive. Add
+
+   ```
+   SMTP_HOST=mail.lcci.com.pk
+   SMTP_PORT=587
+   SMTP_USER=
+   SMTP_PASSWORD=
+   MAIL_FROM=
+   CONTACT_INBOX=
+   ```
+
+   and check it from the host itself before trusting it, because two failures
+   are specific to shared cPanel and neither is visible from a laptop. Outbound
+   connections to third-party SMTP ports are blocked on some plans, which looks
+   like a connection timeout with nothing wrong in the configuration — the
+   answer there is the host's own `localhost:25`, not a longer timeout. And the
+   server often presents a certificate for its own hostname rather than for
+   `mail.lcci.com.pk`, which fails verification; point `SMTP_HOST` at the name
+   on the certificate rather than setting `SMTP_TLS_REJECT_UNAUTHORIZED=0`,
+   which accepts any certificate at all on mail that carries sign-in codes.
+   `.env.example` has the rest. **SPF, DKIM and DMARC must be published for the
+   `MAIL_FROM` domain before the first send**, and `MAIL_FROM` must be on the
+   same domain as `SITE_ORIGIN`.
+
    Generate the three secrets with
    `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`,
    and create `PRIVATE_UPLOAD_ROOT` by hand at mode 0700, outside the
@@ -220,9 +261,19 @@ Same procedure, four differences that matter:
 - **Static assets 404 after deploy.** `.next/static` is *not* inside
   `.next/standalone`; it has to be copied alongside it. Same for `public/`.
 - **App unreachable.** Passenger assigns the port. Never hardcode 3000.
-- **Image optimisation OOM.** `sharp` is memory-hungry on shared plans. If the
-  optimiser starts failing, set `images.unoptimized = true` and pre-size images
-  at build time instead.
+- **Image optimisation is off, and must stay off.** `images.unoptimized = true`
+  in `next.config.ts`, so `next/image` emits a plain `<img>` and every asset is
+  served straight out of `public/`. The optimiser needs `sharp` at runtime,
+  `sharp` is not a dependency, and on this plan it must not become one: it
+  decodes to raw RGBA before resizing, so one 300 dpi A4 scan is ~215 MB in the
+  decoder and the Passenger worker is killed site-wide.
+
+  **This bites in a specific way.** `next dev` has its own fallback decoder, so
+  optimised URLs render fine locally and 500 on the server — the symptom is a
+  broken image whose source is `/_next/image?url=%2Fbrand%2Flcci-logo.png&w=640&q=75`.
+  If you see a `/_next/image` URL anywhere in the served HTML, `unoptimized`
+  has been removed or overridden. Images are pre-sized at build time instead;
+  keep them that way when adding to `public/`.
 - **No background daemons.** A self-hosted Meilisearch/Typesense process is not
   available here, which is why search sits behind an adapter and ships on MySQL
   `FULLTEXT` first.

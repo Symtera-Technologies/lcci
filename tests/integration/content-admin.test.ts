@@ -11,6 +11,7 @@ import {
   deleteDraftContentItem,
   updateContentItem,
 } from "@/content/admin";
+import { CONTENT_FORMS } from "@/content/fields";
 import { databaseAvailable, resetTables, skipReason, teardown } from "./helpers";
 
 /**
@@ -660,7 +661,7 @@ describe.skipIf(!available)("every content type", () => {
   /**
    * One round trip per type, driven by the field specs.
    *
-   * Twelve types share one write path, so a column renamed in a migration and
+   * Fifteen types share one write path, so a column renamed in a migration and
    * not in `CONTENT_FORMS` fails here rather than when an editor opens that
    * one screen months later. The forms below are the minimum each type's NOT
    * NULL columns require.
@@ -695,17 +696,50 @@ describe.skipIf(!available)("every content type", () => {
       author_role: "A role",
       company: "A firm",
     },
-    video: { youtube_id: "abc123", orientation: "landscape", poster_id: "1" },
+    video: { youtube_id: "abc123", orientation: "landscape" },
     gallery_album: { description: "An album.", occurred_at: "2027-02-20T18:00" },
+    // Every column on `content_pages` is nullable: a page is routinely created
+    // before anybody has written it. So the minimum really is nothing beyond
+    // the parent fields, and that is worth asserting rather than assuming.
+    page: {},
+    hero: {
+      badge_en: "Since 1923",
+      headline_en: "A headline.",
+      subhead_en: "A standfirst.",
+      primary_cta_label_en: "Join",
+      primary_cta_href: "/membership/apply",
+    },
+    // `photo_id` is a media field and is filled in below from a real asset.
+    portrait: { role: "President", term: "2023-24" },
   };
+
+  /**
+   * Media ids are filled in from a real row, not written above.
+   *
+   * Every `media` field is a NOT NULL foreign key, so a type that has one
+   * cannot be saved without an asset to point at — and the id cannot be
+   * hard-coded, because `resetTables` reissues it. Read from the field specs
+   * rather than listed here so that the next type with a photograph needs no
+   * edit to this file: that is the same reason the suite is driven by
+   * `CONTENT_FORMS` in the first place.
+   */
+  function mediaFieldsOf(kind: ContentKind): readonly string[] {
+    return CONTENT_FORMS[kind].fields
+      .filter((field) => field.kind === "media")
+      .map((field) => field.name);
+  }
 
   it.each(Object.keys(MINIMAL) as ContentKind[])("round-trips a %s", async (kind) => {
     const actor = staffActor(EDITOR);
 
-    // `content_videos.poster_id` is NOT NULL and a foreign key, so the video
-    // case needs one real media row to point at.
-    if (kind === "video") {
-      await getDb()
+    // One real asset, pointed at by every media field this type has. The
+    // same photograph three times is fine for the hero: this exercises the
+    // write path, not the composition.
+    const mediaFields = mediaFieldsOf(kind);
+    const images: Record<string, string> = {};
+
+    if (mediaFields.length > 0) {
+      const inserted = await getDb()
         .insertInto("media_assets")
         .values({
           src: "/photos/poster.jpg",
@@ -713,7 +747,10 @@ describe.skipIf(!available)("every content type", () => {
           width: 1600,
           height: 900,
         })
-        .execute();
+        .executeTakeFirst();
+
+      const mediaId = String(Number(inserted.insertId ?? 0));
+      for (const name of mediaFields) images[name] = mediaId;
     }
 
     const saved = await createContentItem(actor, kind, {
@@ -721,6 +758,7 @@ describe.skipIf(!available)("every content type", () => {
       title_en: `A ${kind}`,
       department_code: "info",
       ...MINIMAL[kind],
+      ...images,
     });
 
     expect(saved.id).toBeGreaterThan(0);
@@ -733,6 +771,7 @@ describe.skipIf(!available)("every content type", () => {
         title_en: `A revised ${kind}`,
         department_code: "info",
         ...MINIMAL[kind],
+        ...images,
       }),
     ).resolves.toMatchObject({ version: 2 });
   });

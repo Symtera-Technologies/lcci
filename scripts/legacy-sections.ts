@@ -258,16 +258,33 @@ export const SECTIONS: Record<string, Section> = {
   /**
    * What membership is and what it costs.
    *
-   * Only one of the six routes has a legacy page behind it. The others are
+   * Two of the six routes have a legacy page behind it. The others are
    * genuinely not on lcci.com.pk: the dues are published as a PDF rather than
    * as a page, renewal is described nowhere, the directory is a database and
-   * "FAQs" is an `href="#"` on the old menu. Those four are rows an editor
-   * types into, which is why the rows are created regardless.
+   * "FAQs" is an `href="#"` on the old menu. Those are rows an editor types
+   * into, which is why the rows are created regardless.
+   *
+   * **`membership.php` was missed on the first pass.** It is the target of the
+   * legacy site's own *Membership* menu item and it was never imported — the
+   * crawler saw it (`LEGACY-MIGRATION.md` cites it in the broken-links table)
+   * and no mapping claimed it, so 1,316 characters the chamber publishes today
+   * were absent from the rebuild and the client spreadsheet was asking LCCI to
+   * write content they already own.
+   *
+   * It maps to `/membership`, the section landing, because that is the same
+   * position in the IA that the legacy menu item occupied — one page, one
+   * destination, no words moved between routes.
+   *
+   * It does **not** close `/membership/categories`. The legacy page says only
+   * "There shall be two classes of memberships" and never names them, so what
+   * the two classes are, and what each costs, is still outstanding and still
+   * LCCI's to supply.
    */
   membership: {
     path: "/membership",
     department: "secretariat",
     mappings: [
+      { path: "/membership", sources: [{ file: "membership.php.json" }] },
       { path: "/membership/why-join", sources: [{ file: "members.php-id-83.json" }] },
     ],
   },

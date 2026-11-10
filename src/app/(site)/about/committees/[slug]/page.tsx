@@ -49,10 +49,25 @@ export async function generateMetadata({
   const committee = await committeeOf(slug);
   if (!committee) return {};
 
+  // The editor's own title and description win where they set them, falling
+  // back to the committee's name and mandate. Before this read them, both
+  // controls were on the admin form and neither reached a visitor.
+  const title = committee.seoTitle ?? committee.nameEn;
+  const description = committee.seoDescription ?? committee.mandate;
+
   return {
-    title: committee.nameEn,
-    description: committee.mandate,
+    title,
+    description,
     alternates: { canonical: `/about/committees/${slug}` },
+    ...(committee.ogImage
+      ? {
+          openGraph: {
+            title,
+            description,
+            images: [{ url: committee.ogImage.src, alt: committee.ogImage.altEn }],
+          },
+        }
+      : {}),
   };
 }
 

@@ -126,14 +126,9 @@ export function Footer() {
                 {l.label}
               </Link>
             ))}
-            <Link
-              href="/ur"
-              lang="ur"
-              dir="rtl"
-              className="text-ink-400 hover:text-white"
-            >
-              اردو
-            </Link>
+            {/* The اردو switch was here too. Removed with the header's two,
+                because `/ur` is not a route — see the note in
+                src/components/site/header.tsx. */}
           </nav>
         </div>
       </div>

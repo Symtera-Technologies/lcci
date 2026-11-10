@@ -126,9 +126,14 @@ export async function BentoServices() {
           >
             What members come here to do
           </h2>
+          {/* Counted, not asserted. The sentence used to say "Five tasks",
+              which was true of the five seeded tiles and became false the
+              moment an editor published a sixth — an ordinary editorial act
+              that silently made the page lie about itself. */}
           <p className="mt-4 text-base leading-relaxed text-stone-600">
-            Five tasks, each one click from every page of the site. Four of them
-            used to mean a trip across the city to Shahrah-e-Aiwan-e-Tijarat.
+            {tiles.length} member services, each one click from every page of the
+            site. Most of them used to mean a trip across the city to
+            Shahrah-e-Aiwan-e-Tijarat.
           </p>
         </div>
 
@@ -251,8 +256,12 @@ function FeatureTile({ tile }: { tile: ServiceTile }) {
         </div>
 
         <div className="mt-10 lg:mt-auto lg:pt-10">
+          {/* "Start here", not "Most used". This panel shows whichever tile
+              an editor put first, and the chamber publishes no figures on which
+              service members use most — so the old label asserted data nobody
+              has, about a row the admin can reorder. */}
           <span className="text-[0.6875rem] font-medium uppercase tracking-[0.16em] text-brand-300">
-            Most used
+            Start here
           </span>
           <h3 className="mt-3 font-display text-display-sm font-semibold text-white">
             {tile.labelEn}
@@ -260,13 +269,12 @@ function FeatureTile({ tile }: { tile: ServiceTile }) {
           <p className="mt-3 max-w-md text-[0.9375rem] leading-relaxed text-ink-200">
             {tile.description}
           </p>
-          {/* The supporting line the small cells do not get. Framing, not a
-              claim about processing times the chamber has not published. */}
-          <p className="mt-4 max-w-md border-t border-white/10 pt-4 text-sm leading-relaxed text-ink-300">
-            Renewal is the one task every member repeats. Start here and your
-            directory listing, committee seats and document rates all stay
-            current.
-          </p>
+          {/* Nothing here but the tile's own description, which is above.
+              This slot used to carry two sentences about renewal, printed
+              under whichever tile sorted first — so reordering the tiles from
+              the admin, which the form explicitly invites, captioned one
+              service with another's copy. A per-tile second line belongs on
+              the `service_tile` type before it belongs in this file. */}
         </div>
       </Link>
     </TiltCard>

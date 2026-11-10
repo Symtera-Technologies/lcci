@@ -167,7 +167,12 @@ export const CONTENT_FORMS: Record<ContentKind, ContentForm> = {
     table: "content_events",
     titleLabel: "Title",
     hasTopics: false,
-    hasSeo: true,
+    // An event has no page of its own. It renders inside the lists on
+    // `/trade/events` and on the homepage band, so a search-result title, a
+    // meta description and a sharing image have nowhere to appear — they were
+    // offered on this form and read by nothing, which is the one kind of
+    // control worse than a missing one. They come back with a detail route.
+    hasSeo: false,
     datedPublicly: true,
     hasSortOrder: false,
     fields: [
@@ -218,7 +223,10 @@ export const CONTENT_FORMS: Record<ContentKind, ContentForm> = {
     table: "content_policy_positions",
     titleLabel: "Title",
     hasTopics: true,
-    hasSeo: true,
+    // No detail route either — positions render in the list on
+    // `/advocacy/positions` and in the homepage's advocacy band. Same reason
+    // as `event` above.
+    hasSeo: false,
     datedPublicly: true,
     hasSortOrder: true,
     fields: [

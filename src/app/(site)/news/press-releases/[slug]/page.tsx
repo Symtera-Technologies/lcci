@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { InteriorPage } from "@/components/site/interior-page";
 import { Prose } from "@/components/site/prose";
 import { Tag, TOPIC_LABELS } from "@/components/ui/tag";
 import { navEntry } from "@/components/site/nav-data";
 import { getPressRelease, getPressReleases } from "@/content/repository";
+import { isUnpublishedArchiveSlug } from "@/content/press-archive";
 import { formatDate } from "@/lib/format";
 
 /**
@@ -30,19 +31,21 @@ const ENTRY = navEntry(INDEX);
 /**
  * Every published release gets a prerendered page.
  *
- * `dynamicParams = false`, so a slug that is not in this list is a 404 at the
- * edge rather than a render that hits the database. These are the chamber's
- * own press releases and the set changes when an editor publishes — which the
- * admin's `revalidatePath` already covers — so there is nothing a
- * render-on-demand path would serve that this does not.
+ * **`dynamicParams` is deliberately left at its default of `true`**, so a slug
+ * that is not in this list renders on demand rather than being refused at the
+ * route level. That is not a performance choice; it is the only way the
+ * archive fallback below can run at all. 686 of the 699 imported releases are
+ * drafts awaiting dates from LCCI, so their slugs are absent from this list
+ * while being the destination of a 308 from `press.php?id=N`. With
+ * `dynamicParams = false` Next answers those 404 before the component is
+ * reached, and the redirect-onto-404 chain that `src/content/press-archive.ts`
+ * exists to prevent happens anyway, silently, because the code preventing it
+ * is unreachable.
  *
- * It does mean the archive's size is bounded by what the build can prerender:
- * 895 pages of a few kilobytes each, which is well inside what `next build`
- * does for this site today, and the number to watch if the archive grows by an
- * order of magnitude.
+ * The cost is one indexed `WHERE slug = ?` for a slug nobody published —
+ * which is what every other dynamic route on this site already pays, and what
+ * the `notFound()` below turns into a cached 404.
  */
-export const dynamicParams = false;
-
 export async function generateStaticParams(): Promise<{ slug: string }[]> {
   // One read, large enough for the whole archive. `getPressReleases` is
   // paginated for the index's sake; here the whole set is the point.
@@ -66,7 +69,15 @@ export async function generateMetadata({
     openGraph: {
       type: "article",
       publishedTime: release.publishedAt,
-      ...(release.heroImage ? { images: [{ url: release.heroImage.src }] } : {}),
+      // The sharing image where an editor set one, the article's own hero
+      // otherwise. That order round, because the whole reason to offer a
+      // separate sharing image is that the picture which reads well at the top
+      // of an article is often the wrong crop for a 1200×630 card.
+      ...(release.ogImage
+        ? { images: [{ url: release.ogImage.src, alt: release.ogImage.altEn }] }
+        : release.heroImage
+          ? { images: [{ url: release.heroImage.src, alt: release.heroImage.altEn }] }
+          : {}),
     },
   };
 }
@@ -108,7 +119,17 @@ export default async function PressReleaseDetail({
 }) {
   const { slug } = await params;
   const release = await getPressRelease(slug);
-  if (!release) notFound();
+
+  if (!release) {
+    // A slug the archive holds but has not published yet goes on to the index
+    // rather than to a Not Found page. 686 of the 699 imported releases are
+    // drafts awaiting dates from LCCI, and every one of them is the
+    // destination of a 301 from `press.php?id=N` — a permanent redirect onto
+    // a 404 loses the ranking the redirect exists to carry. See
+    // src/content/press-archive.ts.
+    if (isUnpublishedArchiveSlug(slug)) redirect(INDEX);
+    notFound();
+  }
 
   const standfirst = standfirstAddsSomething(release.summary, release.bodyEn);
 

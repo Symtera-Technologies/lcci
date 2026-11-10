@@ -48,10 +48,9 @@
  * so import it as a file or run it over SSH.
  */
 
-import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { slugify } from "@/content/fields";
+import { assignSlugs, dedupe } from "./legacy-urls";
 
 interface Imported {
   source: string;
@@ -98,76 +97,9 @@ function slugsAlreadySeeded(migrationsDir: string, before: string): Set<string> 
   return slugs;
 }
 
-/**
- * The same release served at more than one legacy id becomes one row.
- *
- * Eight releases in this archive are published at two ids with byte-identical
- * headlines and bodies — ids 3 and 891 are the same release, as are 309 and
- * 310, and six more pairs. The old site simply has them twice. Seeding both
- * would publish one release at two addresses, which is a duplicate a search
- * engine has to choose between and a reader has no way to tell apart.
- *
- * Identity is the headline and the body together, so this merges only exact
- * repeats. Twelve groups *share a headline*, and four of those differ in the
- * body — ids 1 and 886 are both "Government, LCCI to Work Together for
- * Industrial Growth" at 4,343 and 3,677 characters. Those stay as separate
- * rows, because deciding that the shorter one is a worse copy of the longer is
- * an editorial judgement and this script does not make those.
- *
- * The surviving row keeps the lowest id, which is arbitrary between exact
- * copies and is recorded so that the redirect map can send every legacy URL
- * in the group to the one address that survived.
- */
-function dedupe(items: Imported[]): { kept: Imported; aliases: number[] }[] {
-  const groups = new Map<string, Imported[]>();
+// `dedupe` and `assignSlugs` now live in ./legacy-urls, shared with the 301
+// generator, which has to reproduce these exact slugs.
 
-  for (const item of items) {
-    const key = createHash("sha256")
-      .update(`${item.headline}\u0000${item.body ?? ""}`)
-      .digest("hex");
-    groups.set(key, [...(groups.get(key) ?? []), item]);
-  }
-
-  return [...groups.values()]
-    .map((group) => {
-      const sorted = [...group].sort((a, b) => a.legacyId - b.legacyId);
-      return {
-        kept: sorted[0] as Imported,
-        aliases: sorted.slice(1).map((i) => i.legacyId),
-      };
-    })
-    .sort((a, b) => a.kept.legacyId - b.kept.legacyId);
-}
-
-/**
- * One slug per release, unique within the archive.
- *
- * `slugify` is the application's own — the same suggestion the admin's editor
- * would make from the headline — so these addresses are the ones an editor
- * would have chosen. Two releases can share a headline (the chamber reissues
- * one, or a page was duplicated), and the slug is the public address, so a
- * collision inside the archive is disambiguated with the legacy id rather than
- * silently dropping a release.
- */
-function assignSlugs(items: Imported[]): Map<number, string> {
-  const taken = new Set<string>();
-  const slugs = new Map<number, string>();
-
-  for (const item of items) {
-    const base = slugify(item.headline) || `press-${item.legacyId}`;
-    let slug = base;
-
-    if (taken.has(slug)) {
-      const suffix = `-${item.legacyId}`;
-      slug = `${base.slice(0, 160 - suffix.length)}${suffix}`;
-    }
-
-    taken.add(slug);
-    slugs.set(item.legacyId, slug);
-  }
-
-  return slugs;
-}
 
 function main(): void {
   const [inDir, outPath] = process.argv.slice(2);

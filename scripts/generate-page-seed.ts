@@ -42,6 +42,7 @@ import { navEntry } from "@/components/site/nav-data";
 import { pageSlug } from "@/content/page-slug";
 import { sanitiseBody } from "@/content/sanitise";
 import { SECTIONS, routesOf, type Section, type Source } from "./legacy-sections";
+import { legacyKey } from "./legacy-urls";
 
 interface Imported {
   source: string;
@@ -80,30 +81,8 @@ function escapeHtmlText(value: string): string {
 /* Rewriting the links inside a migrated body                                 */
 /* -------------------------------------------------------------------------- */
 
-/**
- * An href's legacy identity, or null if it does not have one.
- *
- * The old site writes the same page four ways — `about.php?id=101`,
- * `/about.php?id=101`, `http://lcci.com.pk/about.php?id=101` and the `www.`
- * form — and all four appear in the markup, sometimes on one page. They are
- * normalised to the bare path-and-query so one map entry covers all of them.
- *
- * Returns null for a fragment, a `mailto:`/`tel:`, or a link to another host:
- * those are left exactly as they are.
- */
-function legacyKey(href: string): string | null {
-  const trimmed = href.trim();
-  if (trimmed === "" || trimmed.startsWith("#")) return null;
-  if (/^(mailto|tel|javascript|data):/i.test(trimmed)) return null;
+// `legacyKey` now lives in ./legacy-urls, shared with the 301 generator.
 
-  const onThisHost = /^https?:\/\/(?:www\.)?lcci\.com\.pk(?:\/|$)(.*)$/i.exec(trimmed);
-  if (onThisHost) return (onThisHost[1] ?? "").replace(/^\/+/, "");
-
-  // Any other absolute or protocol-relative URL is somebody else's site.
-  if (/^(?:https?:)?\/\//i.test(trimmed)) return null;
-
-  return trimmed.replace(/^\/+/, "");
-}
 
 /**
  * Every legacy URL this migration knows a new address for.

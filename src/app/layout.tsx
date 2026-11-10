@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Newsreader } from "next/font/google";
+import { siteOrigin } from "@/lib/site-url";
 import "./globals.css";
 
 const inter = Inter({
@@ -18,33 +19,11 @@ const newsreader = Newsreader({
 /**
  * The origin every canonical and Open Graph URL is resolved against.
  *
- * Separate from `SITE_ORIGIN`, and both are needed: `SITE_ORIGIN` is a server
- * secret-adjacent value used for the server-action origin check, while this
- * one is inlined into the client bundle because `metadataBase` is evaluated
- * where metadata is rendered. Setting one and not the other is the common
- * mistake, which is why `docs/DEPLOYMENT.md` lists them together.
- *
- * Validated rather than handed to `new URL` directly: a placeholder left in
- * `.env.production.local` otherwise fails the build with `TypeError: Invalid
- * URL` and no indication of which variable produced it.
+ * Defined in `src/lib/site-url.ts` rather than here, because `sitemap.ts` and
+ * `robots.ts` need the same answer and a second copy of the fallback is how
+ * the sitemap and the canonical links come to disagree.
  */
-function siteUrl(): string {
-  const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (!configured) return "https://lcci.com.pk";
-
-  try {
-    new URL(configured);
-    return configured;
-  } catch {
-    throw new Error(
-      `NEXT_PUBLIC_SITE_URL is not a valid URL: ${JSON.stringify(configured)}. ` +
-        "It must include the scheme, for example https://lcci.com.pk. Leave it " +
-        "unset to fall back to the production domain.",
-    );
-  }
-}
-
-const SITE_URL = siteUrl();
+const SITE_URL = siteOrigin();
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

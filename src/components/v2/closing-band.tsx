@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, LogIn } from "lucide-react";
 import { ButtonLink } from "@/components/ui/button";
 import { LEGACY_PORTAL } from "@/membership/portal";
+import { CHAMBER, yearsSinceFounding } from "@/content/chamber";
 
 /**
  * The last thing a visitor sees before the footer.
@@ -47,7 +48,7 @@ export function ClosingBand() {
               Put your firm behind the ask
             </h2>
             <p className="mt-5 max-w-xl text-base leading-relaxed text-ink-200">
-              For 103 years the chamber has made the case for Lahore&rsquo;s
+              For {yearsSinceFounding()} years the chamber has made the case for Lahore&rsquo;s
               businesses to government. Membership puts your sector in the
               directory, your people on the delegations, and your position in the
               room where the asks are drafted.
@@ -94,7 +95,7 @@ export function ClosingBand() {
           <div className="lg:col-span-5 lg:justify-self-end">
             <div className="v2-glass max-w-xs rounded-2xl p-8 shadow-depth-3">
               <p className="font-display text-display-md font-semibold leading-none text-brand-300">
-                1923
+                {CHAMBER.foundedYear}
               </p>
               <hr className="my-5 border-0 border-t border-brand-400/40" />
               <p className="font-display text-lg font-medium leading-snug text-white">
@@ -102,7 +103,7 @@ export function ClosingBand() {
               </p>
               <p className="mt-3 text-sm leading-relaxed text-ink-200">
                 One of Pakistan&rsquo;s oldest and largest chambers, representing
-                members across twenty sectors of Punjab&rsquo;s economy.
+                members across the breadth of Punjab&rsquo;s economy.
               </p>
             </div>
           </div>

@@ -184,6 +184,11 @@ export async function cmsMetadata({
     title: page?.seoTitle ?? page?.titleEn ?? title,
     ...(resolved ? { description: resolved } : {}),
     alternates: { canonical: path },
-    ...(page?.ogImage ? { openGraph: { images: [{ url: page.ogImage.src }] } } : {}),
+    // Live since `getPage` began selecting `og_image_id`. Before that this
+    // branch could never be taken, because nothing in the codebase assigned
+    // `ogImage` — so the control existed, saved, and changed nothing.
+    ...(page?.ogImage
+      ? { openGraph: { images: [{ url: page.ogImage.src, alt: page.ogImage.altEn }] } }
+      : {}),
   };
 }

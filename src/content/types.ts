@@ -217,6 +217,19 @@ export interface Committee {
   nameEn: string;
   mandate: string;
   memberCount: number;
+  /**
+   * The three fields a committee needs because it has a page of its own.
+   *
+   * Not `extends BaseContent`: a committee has no publication date a visitor
+   * is shown and no body, so inheriting the whole base would add four
+   * properties this type cannot honestly fill. These three are here because
+   * `/about/committees/[slug]` renders a `<title>`, a meta description and an
+   * Open Graph card, and until they were read the editor's own values went
+   * nowhere.
+   */
+  seoTitle?: string;
+  seoDescription?: string;
+  ogImage?: ImageRef;
 }
 
 /**

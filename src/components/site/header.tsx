@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { ChevronDown, Menu, Phone, Search, User, X } from "lucide-react";
+import { ChevronDown, Menu, Phone, User, X } from "lucide-react";
 import { Logo } from "./logo";
 import { PRIMARY_NAV, type NavSection } from "./nav-data";
 import { ButtonLink } from "@/components/ui/button";
@@ -54,14 +54,16 @@ export function Header() {
               <User className="h-3.5 w-3.5" aria-hidden />
               Member login
             </a>
-            <Link
-              href="/ur"
-              lang="ur"
-              dir="rtl"
-              className="rounded px-1.5 py-0.5 text-sm transition-colors hover:bg-white/10 hover:text-white"
-            >
-              اردو
-            </Link>
+            {/* The اردو switch is not here yet.
+                Every content type stores its Urdu beside its English and one
+                component renders any of it, so the switch had nowhere to go:
+                `/ur` is not a route and the link 404'd from the top of all 70
+                pages. A language switch that returns a Not Found page is worse
+                than no switch — it tells a bilingual visitor the Urdu site
+                exists and is broken, rather than that it is coming.
+
+                Restoring it is three things, in this order: an `/ur` route
+                group, a locale-aware `getPage`, and this link. */}
           </nav>
         </div>
       </div>
@@ -79,13 +81,12 @@ export function Header() {
         </nav>
 
         <div className="flex items-center gap-2">
-          <Link
-            href="/search"
-            aria-label="Search the site"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-ink-700 transition-colors hover:bg-stone-100"
-          >
-            <Search className="h-[1.125rem] w-[1.125rem]" aria-hidden />
-          </Link>
+          {/* No search affordance until there is a search.
+              `/search` is not a route, so this icon 404'd from the header of
+              all 70 pages — and a magnifying glass is a promise a visitor
+              tests immediately. The plan's search is MySQL FULLTEXT behind the
+              existing adapter seam with an Urdu normalisation pass; when that
+              lands, this button comes back. */}
 
           {/* Both "Join" and "Member login" leave for the Chamber's portal:
               this site runs no membership account of its own. See
@@ -276,15 +277,8 @@ function MobileNav({ onClose }: { onClose: () => void }) {
           >
             Member login
           </ButtonLink>
-          <Link
-            href="/ur"
-            lang="ur"
-            dir="rtl"
-            onClick={onClose}
-            className="block pt-1 text-center text-sm text-stone-500 hover:text-ink-900"
-          >
-            اردو میں دیکھیں
-          </Link>
+          {/* The drawer's اردو switch, removed with the one in the utility
+              bar above and for the same reason. */}
         </div>
       </div>
     </div>,

@@ -186,6 +186,39 @@ function imageOf(row: {
 }
 
 /**
+ * The sharing image, from the aliased columns a second join brings back.
+ *
+ * Separate from `imageOf` rather than reusing it, because a row that carries
+ * two images cannot name both sets of columns `src`/`alt_en`/`width`. The
+ * aliases are explicit at every call site for the same reason.
+ *
+ * Why this exists at all: `og_image_id` has been on `content_items` and on the
+ * admin's form since the content types landed, under the help text "Shown when
+ * the page is shared on WhatsApp or LinkedIn" — and no getter selected it, so
+ * `BaseContent.ogImage` was never assigned and `cmsMetadata`'s `openGraph`
+ * branch was dead. An editor set it, saw "Saved.", and every share of the page
+ * still had no picture. A field that saves and does nothing is worse than a
+ * field that was never offered, which is why this is wired rather than the
+ * control removed.
+ */
+function ogImageOf(row: {
+  og_src: string | null;
+  og_alt_en: string | null;
+  og_alt_ur: string | null;
+  og_width: number | null;
+  og_height: number | null;
+}): ImageRef | undefined {
+  if (row.og_src === null) return undefined;
+  return {
+    src: row.og_src,
+    altEn: row.og_alt_en ?? "",
+    ...(row.og_alt_ur ? { altUr: row.og_alt_ur } : {}),
+    width: row.og_width ?? 0,
+    height: row.og_height ?? 0,
+  };
+}
+
+/**
  * Topics for a set of items, in one query.
  *
  * A second round trip rather than `GROUP_CONCAT`, which has a configurable
@@ -241,6 +274,7 @@ export async function getPage(slug: string, now = new Date()): Promise<Page | nu
     .innerJoin("content_pages as p", "p.content_item_id", "ci.id")
     .innerJoin("departments as d", "d.code", "ci.department_code")
     .leftJoin("media_assets as hero", "hero.id", "p.hero_image_id")
+    .leftJoin("media_assets as og", "og.id", "ci.og_image_id")
     .select([
       "ci.id",
       "ci.slug",
@@ -251,6 +285,11 @@ export async function getPage(slug: string, now = new Date()): Promise<Page | nu
       "ci.updated_at",
       "ci.seo_title",
       "ci.seo_description",
+      "og.src as og_src",
+      "og.alt_en as og_alt_en",
+      "og.alt_ur as og_alt_ur",
+      "og.width as og_width",
+      "og.height as og_height",
       "d.name_en as department_name",
       "p.standfirst_en",
       "p.standfirst_ur",
@@ -271,6 +310,7 @@ export async function getPage(slug: string, now = new Date()): Promise<Page | nu
   if (!row) return null;
 
   const heroImage = imageOf(row);
+  const ogImage = ogImageOf(row);
   // Absent, not empty: see the note on `Page.meta`. A column holding nothing
   // but separators has to behave the same way a NULL does, which is why this
   // is a length check on the split and not a truthiness check on the column.
@@ -286,6 +326,7 @@ export async function getPage(slug: string, now = new Date()): Promise<Page | nu
     ...(row.body_en ? { bodyEn: row.body_en } : {}),
     ...(row.body_ur ? { bodyUr: row.body_ur } : {}),
     ...(heroImage ? { heroImage } : {}),
+    ...(ogImage ? { ogImage } : {}),
   };
 }
 
@@ -516,6 +557,7 @@ function pressReleaseRows(now: Date) {
     .innerJoin("content_press_releases as pr", "pr.content_item_id", "ci.id")
     .innerJoin("departments as d", "d.code", "ci.department_code")
     .leftJoin("media_assets as hero", "hero.id", "pr.hero_image_id")
+    .leftJoin("media_assets as og", "og.id", "ci.og_image_id")
     .select([
       "ci.id",
       "ci.slug",
@@ -526,6 +568,11 @@ function pressReleaseRows(now: Date) {
       "ci.updated_at",
       "ci.seo_title",
       "ci.seo_description",
+      "og.src as og_src",
+      "og.alt_en as og_alt_en",
+      "og.alt_ur as og_alt_ur",
+      "og.width as og_width",
+      "og.height as og_height",
       "d.name_en as department_name",
       "pr.summary",
       "pr.body_en",
@@ -547,12 +594,14 @@ function mapPressRelease(
   topics: Map<number, TopicSlug[]>,
 ): PressRelease {
   const heroImage = imageOf(row);
+  const ogImage = ogImageOf(row);
   return {
     ...baseOf(row),
     summary: row.summary,
     ...(row.body_en ? { bodyEn: row.body_en } : {}),
     ...(row.body_ur ? { bodyUr: row.body_ur } : {}),
     ...(heroImage ? { heroImage } : {}),
+    ...(ogImage ? { ogImage } : {}),
     topics: topics.get(row.id) ?? [],
     ...(row.spokesperson ? { spokesperson: row.spokesperson } : {}),
   };
@@ -893,16 +942,39 @@ export async function getServiceTiles(): Promise<ServiceTile[]> {
 export async function getCommittees(): Promise<Committee[]> {
   const rows = await liveItems("committee", new Date())
     .innerJoin("content_committees as c", "c.content_item_id", "ci.id")
-    .select(["ci.slug", "ci.title_en", "c.mandate", "c.member_count"])
+    .leftJoin("media_assets as og", "og.id", "ci.og_image_id")
+    .select([
+      "ci.slug",
+      "ci.title_en",
+      "c.mandate",
+      "c.member_count",
+      // A committee is the one content type besides `page` and
+      // `press_release` with a URL of its own, so its search title,
+      // description and sharing image are things a visitor can actually be
+      // shown. All three were offered on the admin form and read by nothing.
+      "ci.seo_title",
+      "ci.seo_description",
+      "og.src as og_src",
+      "og.alt_en as og_alt_en",
+      "og.alt_ur as og_alt_ur",
+      "og.width as og_width",
+      "og.height as og_height",
+    ])
     .orderBy("ci.sort_order")
     .execute();
 
-  return rows.map((row) => ({
-    slug: row.slug,
-    nameEn: row.title_en,
-    mandate: row.mandate,
-    memberCount: row.member_count,
-  }));
+  return rows.map((row) => {
+    const ogImage = ogImageOf(row);
+    return {
+      slug: row.slug,
+      nameEn: row.title_en,
+      mandate: row.mandate,
+      memberCount: row.member_count,
+      ...(row.seo_title ? { seoTitle: row.seo_title } : {}),
+      ...(row.seo_description ? { seoDescription: row.seo_description } : {}),
+      ...(ogImage ? { ogImage } : {}),
+    };
+  });
 }
 
 /**
@@ -1263,4 +1335,48 @@ export async function getGalleryAlbums(limit = 24): Promise<GalleryAlbum[]> {
     occurredAt: album.occurred_at.toISOString(),
     images: byAlbum.get(album.id) ?? [],
   }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Slug index                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/** One row's address and the last time it changed. */
+export interface SlugIndexEntry {
+  slug: string;
+  /** `updated_at`, which is what a sitemap's `lastmod` means. */
+  updatedAt: Date;
+}
+
+/**
+ * Every live row of one type, as slug and modification date only.
+ *
+ * The sitemap's query, and the reason it is not `getPressReleases({ limit:
+ * 1000 })`. That would be correct today — seven releases are published — and
+ * would become a read of 693 rows with their sanitised bodies, their hero
+ * images and a second round trip for their topics, to build a list of URLs
+ * that uses none of it. The archive is already in the table waiting on dates,
+ * so the wasteful version is not hypothetical; it is next month.
+ *
+ * Two columns, one index, no joins. It carries the same live predicate as
+ * every other list read, which is the property that matters: a sitemap is a
+ * promise to a crawler that these URLs exist, and a draft's URL is a 404 that
+ * costs crawl budget and shows up in Search Console as an error against the
+ * chamber's name.
+ *
+ * `updatedAt` rather than `publishedAt`. A press release edited for a typo six
+ * months after publication has changed, and `lastmod` is the signal a crawler
+ * uses to decide whether to fetch it again — reporting the original date would
+ * tell it not to bother.
+ */
+export async function getSlugIndex(
+  type: ContentKind,
+  now = new Date(),
+): Promise<SlugIndexEntry[]> {
+  const rows = await liveItems(type, now)
+    .select(["ci.slug", "ci.updated_at"])
+    .orderBy("ci.slug")
+    .execute();
+
+  return rows.map((row) => ({ slug: row.slug, updatedAt: row.updated_at }));
 }

@@ -4,6 +4,7 @@ import { SESSION_COOKIE } from "@/server/auth/session";
 import { authenticatedCsp, cspHeaderName, CSP_REPORT_DIRECTIVE } from "@/server/csp";
 import { routePolicy } from "@/server/auth/policy";
 import { disabledRouteTarget } from "@/membership/portal";
+import { LEGACY_REDIRECTS } from "@/content/legacy-redirects";
 
 /**
  * Proxy — a pre-filter, not a security boundary.
@@ -70,6 +71,31 @@ export function proxy(request: NextRequest): NextResponse {
   // against relying on shared modules and globals — a proxy may be deployed
   // separately from the render path.
   const requestId = newRequestId();
+
+  // Legacy lcci.com.pk addresses, before anything else looks at the path.
+  //
+  // First because these URLs belong to no route and would otherwise fall
+  // through to a 404: every `.php` address the old site published, nearly a
+  // thousand of them, with ~900 press releases carrying the bulk of the
+  // chamber's search footprint. A 404 loses the visit and, worse, makes Google
+  // drop the URL along with the ranking it earned — a 301 moves that ranking
+  // to the page now holding the same words.
+  //
+  // Here rather than in `next.config.ts`'s `redirects()`, which is the
+  // idiomatic place for a handful: 754 entries, each needing a `has` clause to
+  // match a query string, becomes 754 rules evaluated in order against every
+  // request that misses the route table. This is one object lookup, and the
+  // map is a generated module with no I/O behind it — the rule against work in
+  // the proxy is about the database, and this touches nothing.
+  const legacy = legacyRedirect(pathname, request.nextUrl.searchParams);
+  if (legacy) {
+    // 308 and not 307: these moves are permanent, and permanence is the half
+    // of a redirect that search engines act on. The opposite call to the
+    // portal redirect below, which is temporary on purpose.
+    const moved = NextResponse.redirect(new URL(legacy, request.url), 308);
+    moved.headers.set("x-request-id", requestId);
+    return moved;
+  }
 
   // The membership portal is switched off — joining, signing in, fees and
   // renewal all live on membership.lcci.org.pk. See `membership/portal.ts`.
@@ -142,6 +168,38 @@ export function proxy(request: NextRequest): NextResponse {
   }
 
   return response;
+}
+
+/**
+ * Where a legacy lcci.com.pk address now lives, or null if it is not one.
+ *
+ * The table is keyed on path-and-query with no leading slash — `legacyKey`'s
+ * normal form — because the old site wrote every one of its own links four
+ * different ways and they all have to resolve to one entry.
+ *
+ * **The press fallback is the second half of this, and it matters.** The old
+ * site published `press.php?id=N` for ids up to ~895, of which 699 still had a
+ * release when the archive was crawled; the rest were already empty. Those
+ * ~196 ids have inbound links too, and sending them to the archive index is
+ * better than a 404 — the visitor arrived looking for a press release and the
+ * archive is where press releases are. It is scoped to `press.php` on purpose:
+ * a blanket "any unknown .php goes home" would turn every mistyped URL into a
+ * soft 404, which search engines treat worse than the real thing.
+ */
+export function legacyRedirect(pathname: string, params: URLSearchParams): string | null {
+  // Only the old site's own shapes, so no ordinary 404 pays for this lookup.
+  if (!pathname.endsWith(".php") && !pathname.endsWith(".html")) return null;
+
+  const file = pathname.replace(/^\/+/, "");
+  const id = params.get("id");
+  const key = id === null ? file : `${file}?id=${id}`;
+
+  const target = LEGACY_REDIRECTS[key];
+  if (target) return target;
+
+  if (file === "press.php") return "/news/press-releases";
+
+  return null;
 }
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";

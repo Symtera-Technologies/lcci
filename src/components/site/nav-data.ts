@@ -326,3 +326,42 @@ export function navEntry(href: `/${string}`): NavEntry {
       "and nothing links to it.",
   );
 }
+
+/**
+ * Every public route on this site, in navigation order.
+ *
+ * The inverse of `navEntry`: that answers "what is at this address", this
+ * answers "what addresses are there". The sitemap needs the second question
+ * answered, and asking the filesystem instead — reading `src/app/(site)` for
+ * `page.tsx` files — would work in `next dev` and return nothing once the app
+ * is bundled, which is the worst shape of bug: a sitemap that is correct on
+ * the developer's machine and lists one URL in production.
+ *
+ * So it comes from the IA, which is where this site has always said what it
+ * publishes, and `tests/crawling.test.ts` holds the two halves together by
+ * asserting this list is exactly the set of routes on disk. A route added
+ * without a navigation entry already fails `navEntry`; one added without
+ * reaching the sitemap now fails too.
+ *
+ * The homepage is first and is not in `PRIMARY_NAV` — nothing in the IA points
+ * at `/`, deliberately, since the rule this file enforces is that no entry
+ * loops home. The off-site membership portal is filtered out by `isSitePath`.
+ */
+export function sitePaths(): `/${string}`[] {
+  const paths: `/${string}`[] = ["/"];
+
+  for (const section of PRIMARY_NAV) {
+    paths.push(section.href);
+    for (const child of section.children) {
+      if (isSitePath(child.href)) paths.push(child.href);
+    }
+  }
+
+  // The three legal pages, which are reachable from the footer and nowhere
+  // else. `FOOTER_TASKS` is deliberately not read: every entry in it is a
+  // shortcut to a page already listed above, so adding it would only
+  // introduce duplicates for the caller to strip.
+  for (const legal of FOOTER_LEGAL) paths.push(legal.href);
+
+  return paths;
+}

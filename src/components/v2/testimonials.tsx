@@ -54,9 +54,13 @@ export async function TestimonialsV2() {
           >
             Why members stay
           </h2>
+          {/* No count. It used to say "Three member firms", which was true of
+              the three seeded rows and became false the moment a fourth was
+              published — and `getTestimonials()` is unbounded, so that is an
+              ordinary editorial act, not an edge case. */}
           <p className="mt-5 text-[0.9375rem] leading-relaxed text-stone-600">
-            Three member firms on what the chamber is actually worth to them, in
-            their own words.
+            Member firms on what the chamber is actually worth to them, in their
+            own words.
           </p>
         </div>
 
@@ -116,10 +120,16 @@ export async function TestimonialsV2() {
             two of six at a time; a board shows the whole roster at once, which
             is the actual point of naming your partners.
 
-            Wordmarks are typeset from `partner.name` because `logo` is in
-            practice absent — LCCI has not supplied approved artwork. A grey
-            placeholder box would say less, weigh more and promise a file that
-            does not exist.
+            Each partner shows its approved artwork where the CMS holds some,
+            and a typeset wordmark from `partner.name` where it does not —
+            which is every row today, because LCCI has not supplied artwork. A
+            grey placeholder box would say less, weigh more and promise a file
+            that does not exist; falling back to the name promises nothing and
+            reads correctly.
+
+            The fallback used to be unconditional, which made `logo_id` the
+            third field on this site that an editor could set, save, and watch
+            do nothing.
             ------------------------------------------------------------------ */}
         {/* Clears the offset card's overhang with room to spare. */}
         <div className="mt-24 border-t border-stone-300 pt-10">
@@ -133,9 +143,26 @@ export async function TestimonialsV2() {
                 key={p.id}
                 className="flex h-full items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-5 py-4 shadow-depth-1"
               >
-                <span className="font-display text-base font-medium leading-snug text-ink-900">
-                  {p.name}
-                </span>
+                {p.logo ? (
+                  // Unoptimised and plain: `images.unoptimized` is set for this
+                  // deployment, so `next/image` would emit this same tag and
+                  // add a dependency for nothing. Height is capped rather than
+                  // set, because partner artwork arrives in whatever aspect
+                  // ratio its owner's brand manual dictates and a fixed box
+                  // would letterbox half of them.
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={p.logo.src}
+                    alt={p.logo.altEn || p.name}
+                    width={p.logo.width || undefined}
+                    height={p.logo.height || undefined}
+                    className="max-h-9 w-auto max-w-[11rem] object-contain object-left"
+                  />
+                ) : (
+                  <span className="font-display text-base font-medium leading-snug text-ink-900">
+                    {p.name}
+                  </span>
+                )}
                 {p.tier === "strategic" && (
                   <Tag tone="ink" className="shrink-0">
                     Strategic

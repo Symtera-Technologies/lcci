@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { Mail, MapPin, Phone, Printer } from "lucide-react";
 import { CHAMBER, addressLines } from "@/content/chamber";
@@ -7,12 +8,43 @@ import { FOOTER_LEGAL, FOOTER_TASKS, PRIMARY_NAV, SOCIAL } from "./nav-data";
 
 export function Footer() {
   return (
-    <footer className="mt-24 bg-ink-950 text-ink-200">
+    // No top margin, deliberately. It carried `mt-24` and that was wrong in a
+    // way only visible on the homepage: the closing band is `bg-ink-950`, the
+    // same colour as this footer, so 96px of margin cut a white gash between
+    // two identical dark surfaces. The space above the footer belongs to the
+    // page — `main` already sets `pb-20`, which is the breathing room an
+    // interior page ending in prose needs — and a page that chooses to end on
+    // a dark band should flow straight into the dark footer.
+    <footer className="bg-ink-950 text-ink-200">
       <div className="container-page py-16">
         <div className="grid gap-12 lg:grid-cols-12">
           {/* Contact block */}
           <div className="lg:col-span-4">
-            <Logo onDark />
+            <div className="flex items-center gap-5">
+              <Logo onDark />
+              {/* The anniversary seal, as a lockup with the wordmark rather
+                  than floated somewhere on its own: it is a mark of standing
+                  and it reads as one next to the name it belongs to.
+
+                  **It is dated art.** The seal says "103 YEARS" and
+                  "1923 — 2026", so it is right for one year and wrong after
+                  that — unlike every other use of the chamber's age on this
+                  site, which comes from `yearsSinceFounding()` in
+                  src/content/chamber.ts. Replacing it is a yearly job:
+                  scripts/prepare-anniversary-badge.mjs derives this file from
+                  the supplied artwork and says what it does.
+
+                  Not `aria-hidden`: the seal sets three facts in type that
+                  appear nowhere else in the footer, so it is described rather
+                  than hidden. */}
+              <Image
+                src="/brand/anniversary-103.png"
+                alt="103 years of advocacy, 1923 to 2026"
+                width={256}
+                height={256}
+                className="h-16 w-16 shrink-0 sm:h-[4.5rem] sm:w-[4.5rem]"
+              />
+            </div>
 
             <address className="mt-6 space-y-3 text-sm not-italic leading-relaxed">
               <p className="flex gap-3">

@@ -2,8 +2,14 @@ node_modules/
 .next/
 out/
 build/
+# Every environment file, then the template back. `.env.*` rather than a list
+# of the names in use, because the one that gets committed is always the one
+# nobody thought to add — `.env.production` matched neither `.env` nor
+# `.env*.local`. Keep the negation: without it this swallows the example and
+# the only record of what the host has to set goes with it.
 .env
-.env*.local
+.env.*
+!.env.example
 *.tsbuildinfo
 next-env.d.ts
 .DS_Store

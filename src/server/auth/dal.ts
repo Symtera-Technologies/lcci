@@ -10,6 +10,8 @@ import {
   type ActorContext,
 } from "@/server/actor";
 import { hashIp, hashUserAgent, newUlid } from "@/server/crypto";
+import { clientIpFromForwarded } from "@/server/auth/forwarded";
+import { env } from "@/server/env";
 import type { PermissionCode } from "@/server/permissions";
 import { SESSION_COOKIE, SENTINEL_COOKIE, SENTINEL_VALUE } from "@/server/auth/session";
 import { validateSessionToken, type ValidatedSession } from "@/server/auth/session";
@@ -159,35 +161,34 @@ async function safeHeaders(): Promise<Headers | null> {
 /**
  * The client address, as far as it can be trusted.
  *
- * Apache always fronts this app under Passenger, so exactly one proxy hop is
- * trusted and the leftmost `x-forwarded-for` entry is taken. An attacker
- * prepends entries freely, so this value is only ever used after hashing and
- * only for rate limiting and audit correlation — never for authorisation.
+ * Read from `x-forwarded-for` by counting `TRUSTED_PROXY_HOPS` entries in from
+ * the **right**, which is where the proxies we control write. The parsing and
+ * the reasoning behind that direction live in `@/server/auth/forwarded`; the
+ * short version is that the leftmost entry is the only one in the header that
+ * no proxy vouched for, so reading it lets a caller pick its own rate-limit
+ * bucket, and a bucket the caller picks is not a limit.
+ *
+ * It is still true that this value is only used after hashing, for rate
+ * limiting and audit correlation, and never for authorisation — but that is a
+ * second line of defence, not the reason the value can be trusted. Hashing does
+ * not help against someone who does not need to know the key, only to change
+ * it.
  *
  * This becomes `CF-Connecting-IP` the day Cloudflare lands in front, and at
  * that point Apache must also be restricted to Cloudflare's ranges, or anyone
  * who finds the origin address bypasses the WAF entirely. Recorded here
- * because that is a deployment change with a code change attached.
+ * because that is a deployment change with a code change attached. Until then,
+ * putting Cloudflare in front without raising the hop count to 2 would mean
+ * trusting Cloudflare's own appended address and bucketing the whole internet
+ * together.
  */
 export function clientIp(headerList: Headers | null): string | null {
   if (!headerList) return null;
 
-  const forwarded = headerList.get("x-forwarded-for");
-  if (!forwarded) return null;
-
-  const first = forwarded.split(",")[0]?.trim();
-  if (!first) return null;
-
-  return looksLikeIp(first) ? first : null;
-}
-
-function looksLikeIp(value: string): boolean {
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(value)) {
-    return value.split(".").every((part) => Number(part) <= 255);
-  }
-  // Loose but sufficient: the value is hashed, never resolved or connected to,
-  // so the cost of accepting a malformed IPv6 literal is one useless bucket.
-  return /^[0-9a-fA-F:]{2,45}$/.test(value) && value.includes(":");
+  return clientIpFromForwarded(
+    headerList.get("x-forwarded-for"),
+    env.trustedProxyHops,
+  );
 }
 
 /* -------------------------------------------------------------------------- */

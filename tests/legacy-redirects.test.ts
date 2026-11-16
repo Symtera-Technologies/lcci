@@ -223,3 +223,39 @@ describe("a press redirect's destination", () => {
     expect(isUnpublishedArchiveSlug("")).toBe(false);
   });
 });
+
+/**
+ * The lookup itself, rather than the table it reads.
+ *
+ * `legacyRedirect` builds its key out of the request path and an `id` query
+ * parameter and uses it to index a plain object literal. A plain object answers
+ * for inherited names as well as its own, so `constructor` comes back as a
+ * truthy function — which the signature promises is a redirect target.
+ *
+ * Nothing inherited ends `.php`, so the extension guard at the top of the
+ * function keeps this unreachable. That is a routing decision standing in for a
+ * safety one, and the two are three lines apart with nothing connecting them.
+ * These cases get past the guard and land on the lookup, so they fail if the
+ * own-property check is ever removed.
+ */
+describe("the legacy lookup refuses inherited keys", () => {
+  const noParams = () => new URLSearchParams();
+
+  it("does not answer for Object.prototype members dressed as legacy pages", () => {
+    for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty"]) {
+      expect(legacyRedirect(`/${name}.php`, noParams())).toBeNull();
+      expect(legacyRedirect(`/${name}.html`, noParams())).toBeNull();
+    }
+  });
+
+  it("does not answer for __proto__, with or without an id", () => {
+    expect(legacyRedirect("/__proto__.php", noParams())).toBeNull();
+    expect(legacyRedirect("/__proto__.php", new URLSearchParams("id=1"))).toBeNull();
+  });
+
+  it("still answers for a real entry", () => {
+    const [from, to] = Object.entries(LEGACY_REDIRECTS)[0] as [string, string];
+    const [file, query] = from.split("?");
+    expect(legacyRedirect(`/${file}`, new URLSearchParams(query ?? ""))).toBe(to);
+  });
+});

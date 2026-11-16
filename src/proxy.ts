@@ -194,7 +194,14 @@ export function legacyRedirect(pathname: string, params: URLSearchParams): strin
   const id = params.get("id");
   const key = id === null ? file : `${file}?id=${id}`;
 
-  const target = LEGACY_REDIRECTS[key];
+  // `Object.hasOwn` rather than a bare index, because `key` is built from the
+  // request: a plain object literal answers for inherited names too, so
+  // `constructor` or `toString` would come back as a truthy function and be
+  // returned where a string is declared. The extension guard three lines up
+  // happens to make that unreachable today — nothing inherited ends `.php` —
+  // but that guard is a routing decision, not a safety one, and whoever
+  // loosens it later will not be thinking about this lookup.
+  const target = Object.hasOwn(LEGACY_REDIRECTS, key) ? LEGACY_REDIRECTS[key] : null;
   if (target) return target;
 
   if (file === "press.php") return "/news/press-releases";

@@ -53,6 +53,29 @@ function int(name: string, fallback: number): number {
 }
 
 /**
+ * A count that is allowed to be zero.
+ *
+ * Separate from `int()` rather than loosening it: the values `int()` guards are
+ * a TCP port and a connection-pool size, where zero is always a mistake and
+ * should stay rejected. A trusted-hop count of zero is a real configuration —
+ * it means no proxy fronts this app, so no part of `x-forwarded-for` is
+ * trustworthy — and conflating "not configured" with "configured to zero" is
+ * exactly the confusion that would reintroduce header spoofing.
+ */
+function count(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw || raw.trim() === "") return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    problems.push(
+      `${name} must be zero or a positive integer, got ${JSON.stringify(raw)}`,
+    );
+    return fallback;
+  }
+  return parsed;
+}
+
+/**
  * The private upload root.
  *
  * Four separate checks, because each one corresponds to a mistake that has a
@@ -197,6 +220,24 @@ export const env = {
 
   /** Pepper for hashing IPs before they become log or rate-limit keys. */
   ipPepper: required("IP_HASH_PEPPER"),
+
+  /**
+   * How many proxies sit in front of this app and append to
+   * `x-forwarded-for`.
+   *
+   * A fact about the deployment, not a tuning knob. The client address is read
+   * by counting this many entries in from the right-hand end of the header,
+   * because that end is written by hops we control and the left-hand end is
+   * written by the caller — see `@/server/auth/forwarded`.
+   *
+   * Defaults to 1 because Apache always fronts this app under Passenger. It
+   * deliberately does not use `required()`: there is a correct default, and a
+   * host that refuses to boot over an unset optional value is a worse outcome
+   * than one that boots the way the deployment actually looks. Set it too high
+   * and every request collapses into one shared rate-limit bucket; set it too
+   * low and the caller chooses its own.
+   */
+  trustedProxyHops: count("TRUSTED_PROXY_HOPS", 1),
 
   /** Shared secret the cPanel cron job presents as a bearer token. */
   cronSecret: required("CRON_SECRET"),
